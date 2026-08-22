@@ -9,12 +9,14 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from typing import Any
 
 import websocket  # type: ignore
 
-CDP_HTTP = "http://127.0.0.1:9222"
+# 千帆桌面端 CDP 端点；端口可用环境变量 XHS_CDP_BASE 覆盖（如 9222 被占用时避让）
+CDP_HTTP = os.environ.get("XHS_CDP_BASE", "http://127.0.0.1:9222")
 
 
 def list_targets() -> list[dict]:

@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .adapter import PlatformMessage
@@ -25,7 +25,10 @@ class MVPRequest(BaseModel):
 
 
 @router.post("/decide")
-async def mvp_decide(req: MVPRequest):
+async def mvp_decide(req: MVPRequest, request: Request, x_api_key: str | None = Header(default=None)):
+    settings = getattr(request.app.state, "settings", None)
+    if settings is not None and settings.api_key and x_api_key != settings.api_key:
+        raise HTTPException(status_code=401, detail="unauthorized")
     msg = PlatformMessage(
         platform=req.platform,
         store_id=req.store_id,

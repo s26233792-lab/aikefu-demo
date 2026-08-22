@@ -194,8 +194,11 @@ class QianfanCdpWorker:
 
     async def _poll_outbox(self, session: CdpSession) -> None:
         """轮询待发送队列，把人工审批通过/手写的回复回填到千帆。"""
+        outbox_headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            outbox_headers["X-Api-Key"] = self.api_key
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{self.decision_url.rstrip('/')}/v1/outbox/pull")
+            resp = await client.get(f"{self.decision_url.rstrip('/')}/v1/outbox/pull", headers=outbox_headers)
             resp.raise_for_status()
             data = resp.json()
         for item in data.get("outbox", []):
@@ -209,7 +212,7 @@ class QianfanCdpWorker:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(
                     f"{self.decision_url.rstrip('/')}/v1/outbox/{oid}/ack",
-                    json={"status": "sent"},
+                    json={"status": "sent"}, headers=outbox_headers,
                 )
 
     async def _poll_once(self, session: CdpSession) -> None:

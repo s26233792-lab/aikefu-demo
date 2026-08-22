@@ -15,7 +15,7 @@ timeout /t 2 /nobreak >nul
 
 REM 2. 带调试端口启动千帆客户端
 echo [2/4] 带调试端口启动千帆客户端...
-start "" "C:\Users\Terrt\AppData\Local\Programs\eva\千帆客服工作台.exe" --remote-debugging-port=9222 --remote-allow-origins=*
+start "" "C:\Users\Terrt\AppData\Local\Programs\eva\千帆客服工作台.exe" --remote-debugging-port=9222 --remote-allow-origins=http://127.0.0.1:9222
 timeout /t 6 /nobreak >nul
 
 REM 3. 启动决策 API（新窗口）

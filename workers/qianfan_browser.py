@@ -105,7 +105,7 @@ class QianfanBrowserWorker:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 headless=self.headless,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                args=["--disable-blink-features=AutomationControlled"],
                 viewport={"width": 1280, "height": 900},
             )
             page = context.pages[0] if context.pages else await context.new_page()

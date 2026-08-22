@@ -88,7 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="小红书千帆客服 Agent", version="1.0.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://127.0.0.1:18081","http://localhost:18081"],
         allow_methods=["*"],
         allow_headers=["*"],
     )

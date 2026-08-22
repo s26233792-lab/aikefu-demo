@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 from pathlib import Path
 
@@ -16,6 +16,7 @@ _WEB_DIR = Path(__file__).resolve().parent
 
 
 @router.get("/", response_class=HTMLResponse)
-async def index() -> str:
+async def index(request: Request) -> HTMLResponse:
     html = (_WEB_DIR / "index.html").read_text(encoding="utf-8")
-    return html
+    key = getattr(request.app.state.settings, "api_key", "") or ""
+    return HTMLResponse(html.replace("__XHS_API_KEY_PLACEHOLDER__", key))

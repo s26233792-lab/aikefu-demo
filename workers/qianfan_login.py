@@ -39,7 +39,7 @@ def main() -> None:
         browser = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
             headless=False,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            args=["--disable-blink-features=AutomationControlled"],
             viewport={"width": 1280, "height": 900},
         )
         page = browser.new_page()

@@ -119,7 +119,7 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 项目主演示 Agent 是「栀夏 ZHIXIA」女装客服（规则见桌面 `agent.md`）：
 
 ```bash
-python run.py web      # 启动 API
+set PYTHONPATH=src && python run.py web      # 启动 API（src 布局必须设 PYTHONPATH，否则 ModuleNotFoundError）
 # 浏览器打开 http://127.0.0.1:18081 ，左侧切「售前导购/订单物流/售后」点按钮体验
 ```
 

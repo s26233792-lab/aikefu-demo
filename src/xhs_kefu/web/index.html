@@ -157,6 +157,18 @@
 </main>
 
 <script>
+  // --- 部署加固（2026-08-22）：服务端注入 API Key，同源页面自动携带 X-API-Key 鉴权头 ---
+  const API_KEY = "__XHS_API_KEY_PLACEHOLDER__";
+  const _rawFetch = window.fetch;
+  window.fetch = async (url, opts) => {
+    opts = opts || {};
+    const u = String(url);
+    if (u.indexOf("/v1/") === 0 || u.indexOf("/zhixia/") === 0) {
+      const h = opts.headers || {};
+      opts.headers = Object.assign({}, h, { "X-API-Key": API_KEY });
+    }
+    return _rawFetch(url, opts);
+  };
 const SCENES = {
   pre: {
     customerId: "demo",
