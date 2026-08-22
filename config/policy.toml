@@ -1,0 +1,13 @@
+# 小红书千帆客服 Agent —— 风控策略
+
+[compensation]
+# 自动审批上限（分）：500 = ¥5.00
+auto_approve_limit_cents = 500
+# 策略最大值（分）：3000 = ¥30.00
+maximum_refund_cents = 3000
+# 默认小额补偿建议（分）：300 = ¥3.00
+default_offer_cents = 300
+# 挽留可提至上限（分）：500 = ¥5.00
+max_offer_cents = 500
+# 需要证据的补偿理由
+require_evidence_for = ["damaged", "quality_issue", "wrong_item", "missing_item"]

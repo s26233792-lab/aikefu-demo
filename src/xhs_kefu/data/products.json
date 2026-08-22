@@ -1,0 +1,54 @@
+[
+  {
+    "tenant_id": "demo",
+    "store_id": "STORE-001",
+    "sku": "SKU-JACKET-RED-M",
+    "name": "轻量防晒夹克外套",
+    "category": "女装 · 外套",
+    "material": "100% 锦纶防晒面料（UPF50+）",
+    "care": "冷水轻柔机洗，勿漂白，阴凉悬挂晾干",
+    "stock": 18,
+    "price_cents": 12900,
+    "selling_points": ["UPF50+ 专业防晒", "轻薄透气", "反季不易皱"],
+    "sizes": ["S", "M", "L", "XL"]
+  },
+  {
+    "tenant_id": "demo",
+    "store_id": "STORE-001",
+    "sku": "SKU-MUG-BLUE",
+    "name": "陶瓷马克杯（雾霾蓝）",
+    "category": "家居 · 杯具",
+    "material": "高温烧制陶瓷，双层隔热",
+    "care": "支持洗碗机与微波炉，避免骤冷骤热",
+    "stock": 42,
+    "price_cents": 3999,
+    "selling_points": ["简约雾霾蓝", "双层隔热", "大容量 380ml"],
+    "sizes": []
+  },
+  {
+    "tenant_id": "demo",
+    "store_id": "STORE-001",
+    "sku": "SKU-LAMP-WHITE",
+    "name": "护眼台灯（白色）",
+    "category": "家居 · 灯饰",
+    "material": "铝合金 + ABS，A 级护眼光源",
+    "care": "断电后擦拭，勿用湿布接触灯珠",
+    "stock": 7,
+    "price_cents": 18800,
+    "selling_points": ["无频闪 A 级光源", "三档色温调节", "触控调光"],
+    "sizes": []
+  },
+  {
+    "tenant_id": "demo",
+    "store_id": "STORE-001",
+    "sku": "SKU-SCARF-BEIGE",
+    "name": "羊绒围巾（燕麦色）",
+    "category": "女装 · 配饰",
+    "material": "85% 山羊绒 + 15% 桑蚕丝",
+    "care": "干洗或低温手洗，平铺阴干",
+    "stock": 25,
+    "price_cents": 22900,
+    "selling_points": ["轻柔保暖", "亲肤不扎", "秋冬百搭色"],
+    "sizes": []
+  }
+]

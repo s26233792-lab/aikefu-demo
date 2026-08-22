@@ -1,0 +1,26 @@
+[
+  {
+    "vip_id": "ZX-VIP-1028",
+    "verify_phone_last4": "4826",
+    "level": "银卡会员",
+    "points": 860,
+    "growth": 1420,
+    "birth_month": 9,
+    "birth_benefit": "可领取生日满 ¥299 减 ¥40 券"
+  },
+  {
+    "vip_id": "ZX-VIP-2073",
+    "verify_phone_last4": "7319",
+    "level": "金卡会员",
+    "points": 2350,
+    "growth": 5880,
+    "benefits": "享退换货首重补贴，每月 2 次"
+  },
+  {
+    "vip_id": "ZX-VIP-3196",
+    "verify_phone_last4": "1654",
+    "level": "普通会员",
+    "points": 190,
+    "growth": 380
+  }
+]

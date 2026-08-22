@@ -1,0 +1,26 @@
+[
+  {
+    "order_id": "XHS-20260101-001",
+    "carrier": "顺丰速运",
+    "tracking_id": "SF1029384756001",
+    "status": "in_transit",
+    "latest_event": "已到达【上海中转场】，正在发往派送网点",
+    "updated_at": "2026-01-20T08:30:00+08:00"
+  },
+  {
+    "order_id": "XHS-20260102-002",
+    "carrier": "中通快递",
+    "tracking_id": "ZT778899001122",
+    "status": "exception",
+    "latest_event": "【北京转运中心】天气原因导致中转延误，预计延迟 2-3 天",
+    "updated_at": "2026-01-19T21:10:00+08:00"
+  },
+  {
+    "order_id": "XHS-20260103-003",
+    "carrier": "圆通速递",
+    "tracking_id": "YT556677889900",
+    "status": "delivered",
+    "latest_event": "已签收（签收人：驿站代收）",
+    "updated_at": "2026-01-18T16:20:00+08:00"
+  }
+]

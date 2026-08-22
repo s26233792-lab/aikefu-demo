@@ -1,0 +1,28 @@
+# ===== 敏感信息（绝不上传）=====
+.env
+*.env.local
+
+# ===== 千帆登录态 / 数据（含真实 Cookie，绝不上传）=====
+data/qianfan-profile/
+data/dump/
+data/*.db
+data/*.db-*
+
+# ===== Python =====
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ===== 调试脚本（历史遗留，不随项目发布）=====
+scripts/debug_*.py
+scripts/clean_*.py
+scripts/cleanup_test_data.py
+scripts/probe_*.py
+scripts/test_fill_send.py
+scripts/test_last_customer.py
+scripts/check_state.py

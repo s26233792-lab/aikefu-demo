@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>栀夏 ZHIXIA 女装客服 Agent · Demo</title>
+<style>
+  :root {
+    --xhs-red: #ff2442;
+    --xhs-bg: #f7f8fa;
+    --panel-bg: #ffffff;
+    --border: #e5e6eb;
+    --text: #1f2329;
+    --muted: #86909c;
+    --green: #00b42a;
+    --orange: #ff7d00;
+    --blue: #165dff;
+    --shadow: 0 2px 12px rgba(0,0,0,.06);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--xhs-bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 0 20px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  header .logo { font-weight: 700; color: var(--xhs-red); font-size: 18px; display:flex; align-items:center; gap:8px; }
+  header .logo .badge { font-size:12px; background:#ffeef0; color:var(--xhs-red); padding:2px 8px; border-radius:10px; font-weight:500; }
+  header .status { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .dot { width:8px; height:8px; border-radius:50%; background:var(--green); }
+  .dot.warn { background: var(--orange); }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+    overflow: hidden;
+  }
+  .pane { display:flex; flex-direction:column; overflow:hidden; }
+  .pane.left { border-right:1px solid var(--border); background:#fff; }
+  .pane.right { background: #fbfbfc; }
+  .pane-title {
+    padding: 12px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: #fff;
+    display:flex; align-items:center; justify-content:space-between;
+  }
+  .scene-tabs { display:flex; gap:8px; }
+  .scene-tab {
+    padding: 6px 12px; border-radius: 16px; cursor: pointer;
+    font-size: 13px; border:1px solid var(--border); background:#fff; color:var(--text);
+    transition: all .15s;
+  }
+  .scene-tab.active { background: var(--xhs-red); color:#fff; border-color:var(--xhs-red); }
+  .chat { flex:1; overflow-y:auto; padding: 16px; display:flex; flex-direction:column; gap:12px; }
+  .msg { max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+  .msg.customer { align-self: flex-start; background: #f2f3f5; border-top-left-radius: 4px; }
+  .msg.agent { align-self: flex-end; background: var(--xhs-red); color:#fff; border-top-right-radius: 4px; }
+  .msg.system { align-self: center; font-size:12px; color:var(--muted); background:none; padding:4px; }
+  .input-bar { display:flex; padding:12px 16px; gap:10px; border-top:1px solid var(--border); background:#fff; }
+  .input-bar input { flex:1; padding:10px 14px; border:1px solid var(--border); border-radius:20px; font-size:14px; outline:none; }
+  .input-bar input:focus { border-color: var(--xhs-red); }
+  .btn {
+    padding: 10px 18px; border:none; border-radius:20px; cursor:pointer;
+    font-size:14px; font-weight:600; background: var(--xhs-red); color:#fff;
+  }
+  .btn:disabled { opacity:.5; cursor:not-allowed; }
+  .btn.secondary { background:#fff; color:var(--text); border:1px solid var(--border); }
+  /* 右侧链路面板 */
+  .trace { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:10px; }
+  .trace-step {
+    background:#fff; border:1px solid var(--border); border-radius:10px;
+    padding:12px 14px; box-shadow: var(--shadow); font-size:13px;
+  }
+  .trace-step .head { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+  .trace-step .kind {
+    font-size:11px; padding:2px 8px; border-radius:6px; font-weight:600;
+    background:#eef; color:var(--blue);
+  }
+  .trace-step .kind.tool { background:#e8ffee; color:var(--green); }
+  .trace-step .kind.policy { background:#fff3e0; color:var(--orange); }
+  .trace-step .kind.action { background:#ffeef0; color:var(--xhs-red); }
+  .trace-step .kind.security { background:#ffd5d5; color:#c00; }
+  .trace-step .name { font-weight:600; }
+  .trace-step .status-ok { color: var(--green); margin-left:auto; }
+  .trace-step .status-rejected { color: #c00; margin-left:auto; }
+  .trace-step .status-pending { color: var(--orange); margin-left:auto; }
+  .trace-step .detail { color: var(--muted); font-family: ui-monospace, monospace; font-size:12px; margin-top:4px; word-break:break-all; }
+  .trace-reply {
+    background: #fff7f8; border:1px solid #ffd5dc; border-radius:10px;
+    padding:12px 14px; font-size:13px; line-height:1.6;
+  }
+  .trace-reply .label { color: var(--xhs-red); font-weight:600; margin-bottom:4px; }
+  .actions-panel { border-top:1px solid var(--border); padding:12px 16px; background:#fff; max-height:220px; overflow-y:auto; }
+  .actions-panel h3 { font-size:13px; margin-bottom:8px; color:var(--muted); }
+  .action-item { border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:6px; font-size:13px; }
+  .action-item .row { display:flex; gap:8px; align-items:center; }
+  .action-item .btn { font-size:12px; padding:4px 12px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">🌿 栀夏 ZHIXIA 女装客服 <span class="badge">Agent Demo</span></div>
+  <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">加载中…</span></div>
+</header>
+<main>
+  <!-- 左侧：聊天窗 -->
+  <div class="pane left">
+    <div class="pane-title">
+      <span>客服会话</span>
+      <div class="scene-tabs">
+        <div class="scene-tab active" data-scene="pre">售前 · 推荐下单</div>
+        <div class="scene-tab" data-scene="mid">售中 · 物流改址</div>
+        <div class="scene-tab" data-scene="after">售后 · 补偿</div>
+      </div>
+    </div>
+    <div class="chat" id="chat"></div>
+    <div class="input-bar">
+      <input id="input" placeholder="输入顾客消息，模拟千帆网页版发消息…" />
+      <button class="btn" id="send">发送</button>
+    </div>
+  </div>
+  <!-- 右侧：链路可视化 + 审批 -->
+  <div class="pane right">
+    <div class="pane-title"><span>Agent 决策链路（实时）</span></div>
+    <div class="trace" id="trace">
+      <div class="msg system">选择场景或发送消息，查看 Agent 如何理解意图 → 调用工具 → 风控 → 回复</div>
+    </div>
+    <div class="actions-panel" id="modPanel">
+      <h3>🛡️ 人工审批队列（待审回复 / 转人工）</h3>
+      <div id="moderation"></div>
+      <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
+        <h3 style="font-size:13px;color:#86909c;margin-bottom:6px;">✍️ 人工手写回复（发送到千帆）</h3>
+        <input id="manualReplyInput" placeholder="输入要发给当前顾客的消息…" style="width:100%;padding:8px 10px;border:1px solid #e5e6eb;border-radius:8px;font-size:13px;" />
+        <button class="btn" id="manualReplyBtn" style="font-size:12px;margin-top:6px;">发送手写回复</button>
+      </div>
+      <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
+        <h3 style="font-size:13px;color:#86909c;">会话接管</h3>
+        <button class="btn secondary" id="takeOverBtn" style="font-size:12px;">🚫 接管当前会话</button>
+        <button class="btn secondary" id="releaseBtn" style="font-size:12px;margin-left:6px;">✅ 恢复自动回复</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const SCENES = {
+  pre: {
+    customerId: "demo",
+    label: "售前导购",
+    script: [
+      "我 158 cm、52 kg，梨形身材，想买一套面试穿的，预算 800 元。",
+      "阔腿裤 M 码我能穿吗？腰围 70、臀围 95。",
+      "我想要不透的白衬衫，有推荐吗？",
+      "两件 95 折和满减一起用，西装加阔腿裤多少钱？",
+    ],
+  },
+  mid: {
+    customerId: "demo",
+    label: "订单物流",
+    script: [
+      "订单 ZX202608200147，手机号后四位 7319，帮我查物流。",
+      "订单 ZX202608210083 想改地址。",
+      "订单 ZX202608190066 什么时候发货？",
+    ],
+  },
+  after: {
+    customerId: "demo",
+    label: "售后",
+    script: [
+      "订单 ZX202608170219 的退款怎么还没到？",
+      "裙子穿过一天了，不喜欢，能退吗？",
+      "我想查一下会员积分。",
+    ],
+  },
+};
+
+let currentScene = "pre";
+let msgSeq = 0;
+
+const chatEl = document.getElementById("chat");
+const traceEl = document.getElementById("trace");
+const inputEl = document.getElementById("input");
+const sendBtn = document.getElementById("send");
+const actionsEl = document.getElementById("actions");
+const statusDot = document.getElementById("statusDot");
+const statusText = document.getElementById("statusText");
+
+async function healthCheck() {
+  try {
+    const r = await fetch("/health");
+    const j = await r.json();
+    statusText.textContent = `后端正常 · 模式: ${j.llm_mode} · 模型: ${j.llm_model}`;
+    statusDot.className = "dot";
+  } catch (e) {
+    statusText.textContent = "后端未连接";
+    statusDot.className = "dot warn";
+  }
+}
+
+function addMsg(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  chatEl.appendChild(div);
+  chatEl.scrollTop = chatEl.scrollHeight;
+  return div;
+}
+
+function kindClass(kind) {
+  if (kind === "tool") return "tool";
+  if (kind === "policy") return "policy";
+  if (kind === "action") return "action";
+  if (kind === "security") return "security";
+  return "";
+}
+
+function renderTrace(response) {
+  // 清空后展示该条消息的决策链路
+  const container = document.createElement("div");
+  container.style.cssText = "border-left:3px solid #ff2442; padding-left:10px;";
+
+  const intent = document.createElement("div");
+  intent.className = "trace-reply";
+  const intentLabel = document.createElement("div");
+  intentLabel.className = "label";
+  intentLabel.textContent = "意图识别";
+  intent.appendChild(intentLabel);
+  const intentText = document.createElement("div");
+  intentText.textContent = "intent = " + (response.intent || "?");
+  intent.appendChild(intentText);
+  container.appendChild(intent);
+
+  (response.tool_calls || []).forEach((tc) => {
+    const step = document.createElement("div");
+    step.className = "trace-step";
+    const head = document.createElement("div");
+    head.className = "head";
+    const k = document.createElement("span");
+    k.className = "kind tool";
+    k.textContent = "TOOL";
+    const n = document.createElement("span");
+    n.className = "name";
+    n.textContent = tc.name;
+    const s = document.createElement("span");
+    s.className = "status-" + (tc.status === "ok" ? "ok" : "rejected");
+    s.textContent = tc.status + " · " + tc.latency_ms + "ms";
+    head.appendChild(k); head.appendChild(n); head.appendChild(s);
+    step.appendChild(head);
+    const d = document.createElement("div");
+    d.className = "detail";
+    d.textContent = JSON.stringify(tc.args);
+    step.appendChild(d);
+    container.appendChild(step);
+  });
+
+  if (response.policy) {
+    const step = document.createElement("div");
+    step.className = "trace-step";
+    const head = document.createElement("div");
+    head.className = "head";
+    const k = document.createElement("span");
+    k.className = "kind policy";
+    k.textContent = "POLICY";
+    const n = document.createElement("span");
+    n.className = "name";
+    n.textContent = "风控决策";
+    const s = document.createElement("span");
+    s.className = response.policy.outcome === "deny" ? "status-rejected" : "status-pending";
+    s.textContent = response.policy.outcome + " (" + response.policy.reason_code + ")";
+    head.appendChild(k); head.appendChild(n); head.appendChild(s);
+    step.appendChild(head);
+    const d = document.createElement("div");
+    d.className = "detail";
+    d.textContent = response.policy.explanation;
+    step.appendChild(d);
+    container.appendChild(step);
+  }
+
+  if (response.pending_action) {
+    const step = document.createElement("div");
+    step.className = "trace-step";
+    const head = document.createElement("div");
+    head.className = "head";
+    const k = document.createElement("span");
+    k.className = "kind action";
+    k.textContent = "ACTION";
+    const n = document.createElement("span");
+    n.className = "name";
+    n.textContent = response.pending_action.type;
+    const s = document.createElement("span");
+    s.className = "status-pending";
+    s.textContent = response.pending_action.state;
+    head.appendChild(k); head.appendChild(n); head.appendChild(s);
+    step.appendChild(head);
+    const d = document.createElement("div");
+    d.className = "detail";
+    d.textContent = "action_id: " + response.pending_action.action_id;
+    step.appendChild(d);
+    container.appendChild(step);
+  }
+
+  const reply = document.createElement("div");
+  reply.className = "trace-reply";
+  const rl = document.createElement("div");
+  rl.className = "label";
+  rl.textContent = "最终回复（status: " + response.status + "）";
+  reply.appendChild(rl);
+  const rc = document.createElement("div");
+  rc.textContent = response.reply || "(空)";
+  reply.appendChild(rc);
+  container.appendChild(reply);
+
+  traceEl.appendChild(container);
+  traceEl.scrollTop = traceEl.scrollHeight;
+}
+
+async function decide(text, customerId) {
+  const payload = {
+    text: text,
+    session_key: customerId,
+  };
+  const r = await fetch("/zhixia/decide", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return r.json();
+}
+
+async function sendMessage(text, customerId) {
+  if (!text.trim()) return;
+  addMsg("customer", text);
+  inputEl.value = "";
+  sendBtn.disabled = true;
+  const thinking = addMsg("agent", "…");
+  try {
+    const resp = await decide(text, customerId);
+    thinking.remove();
+    if (resp.deduplicated) {
+      addMsg("system", "（消息去重，复用已有回复）");
+    }
+    addMsg("agent", resp.reply || "(无回复)");
+    renderTrace(resp);
+  } catch (e) {
+    thinking.remove();
+    addMsg("agent", "后端调用失败：" + e.message);
+  } finally {
+    sendBtn.disabled = false;
+    refreshActions();
+  }
+}
+
+function switchScene(scene) {
+  currentScene = scene;
+  document.querySelectorAll(".scene-tab").forEach((t) => {
+    t.classList.toggle("active", t.dataset.scene === scene);
+  });
+  chatEl.innerHTML = "";
+  traceEl.innerHTML = "";
+  const s = SCENES[scene];
+  addMsg("system", "—— 已切换到「" + s.label + "」场景（顾客 " + s.customerId + "）——");
+  // 自动播放场景脚本（可点击逐条，此处一次性指导）
+  addMsg("system", "可点击下方脚本逐条体验，或手动输入消息。脚本：" + s.script.join(" / "));
+  // 不自动发送，由用户点下方按钮
+  showScriptButtons(s);
+}
+
+function showScriptButtons(s) {
+  // 在聊天区顶部插入脚本快捷按钮
+  const bar = document.createElement("div");
+  bar.className = "input-bar";
+  bar.style.cssText = "flex-wrap:wrap;";
+  s.script.forEach((line, i) => {
+    const b = document.createElement("button");
+    b.className = "btn secondary";
+    b.textContent = (i + 1) + ". " + (line.length > 18 ? line.slice(0, 18) + "…" : line);
+    b.style.cssText = "font-size:12px; padding:6px 12px; border-radius:14px;";
+    b.onclick = () => sendMessage(line, s.customerId);
+    bar.appendChild(b);
+  });
+  chatEl.appendChild(bar);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+async function refreshActions() {
+  // 现在改为展示人工审批队列
+  await refreshModeration();
+}
+
+async function refreshModeration() {
+  try {
+    const r = await fetch("/v1/moderation?status=pending");
+    const j = await r.json();
+    const el = document.getElementById("moderation");
+    el.innerHTML = "";
+    const items = j.moderation || [];
+    if (items.length === 0) {
+      el.innerHTML = '<div style="color:#86909c;font-size:13px;">暂无待审批项（普通咨询会自动回复，无需审批）</div>';
+      return;
+    }
+    items.forEach((m) => {
+      const item = document.createElement("div");
+      item.className = "action-item";
+      const row = document.createElement("div");
+      row.className = "row";
+      const kindLabel = m.kind === "reply" ? "💬 待审回复" : "⚙️ 写操作";
+      row.innerHTML = `<b>${kindLabel}</b> <span style="color:#86909c">${(m.id||'').slice(0,12)} · ${m.intent||''}</span>`;
+      const ok = document.createElement("button");
+      ok.className = "btn";
+      ok.textContent = "✅ 通过发送";
+      ok.onclick = async () => {
+        await fetch(`/v1/moderation/${m.id}/approve`, { method: "POST" });
+        refreshModeration();
+        addMsg("system", "✅ 已审批通过并发送：" + (m.content||'').slice(0,30));
+      };
+      const no = document.createElement("button");
+      no.className = "btn secondary";
+      no.textContent = "❌ 拒绝";
+      no.style.marginLeft = "6px";
+      no.onclick = async () => {
+        await fetch(`/v1/moderation/${m.id}/reject`, { method: "POST" });
+        refreshModeration();
+        addMsg("system", "❌ 已拒绝该待审项");
+      };
+      row.appendChild(ok);
+      row.appendChild(no);
+      item.appendChild(row);
+      const detail = document.createElement("div");
+      detail.style.cssText = "color:#86909c;font-size:12px;margin-top:4px;word-break:break-all;";
+      detail.textContent = (m.content || '').slice(0,120) + "  [" + (m.reason_code || '') + "]";
+      item.appendChild(detail);
+      el.appendChild(item);
+    });
+  } catch (e) {}
+}
+
+async function handleHandoff(action) {
+  const sid = SCENES[currentScene].customerId;
+  const sessionKey = "demo|xhs_qianfan|STORE-001|" + sid;
+  await fetch("/v1/handoff", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_key: sessionKey, action: action }),
+  });
+  addMsg("system", action === "take_over" ? "🚫 已接管会话，Agent 停止自动回复" : "✅ 已恢复自动回复");
+}
+
+// 手写回复发送到千帆（转人工后的实际操作）
+async function sendManualReply() {
+  const input = document.getElementById("manualReplyInput");
+  const text = input.value.trim();
+  if (!text) { addMsg("system", "⚠️ 请输入要发送的内容"); return; }
+  const sid = SCENES[currentScene].customerId;
+  const sessionKey = "demo|xhs_qianfan|STORE-001|" + sid;
+  await fetch("/v1/outbox", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_key: sessionKey, customer_id: sid, content: text, channel: "xhs_qianfan" }),
+  });
+  input.value = "";
+  addMsg("system", "✍️ 已加入发送队列，将自动回填到千帆");
+  addMsg("agent", text); // 本地也显示
+}
+
+// 浏览器桌面通知
+let lastPendingCount = 0;
+function notifyPending(items) {
+  const hasNew = items.length > lastPendingCount;
+  lastPendingCount = items.length;
+  if (hasNew && items.length > 0 && Notification.permission === "granted") {
+    const kinds = items.map(m => m.kind === "handoff" ? "转人工" : (m.kind === "reply" ? "待审回复" : "写操作")).join("、");
+    new Notification("小红书客服待办", { body: `${items.length} 条待人工处理：${kinds}` });
+  }
+}
+
+async function refreshModeration() {
+  try {
+    const r = await fetch("/v1/moderation?status=pending");
+    const j = await r.json();
+    const el = document.getElementById("moderation");
+    el.innerHTML = "";
+    const items = j.moderation || [];
+    notifyPending(items);
+    if (items.length === 0) {
+      el.innerHTML = '<div style="color:#86909c;font-size:13px;">暂无待审批项（普通咨询会自动回复，无需审批）</div>';
+      return;
+    }
+    items.forEach((m) => {
+      const item = document.createElement("div");
+      item.className = "action-item";
+      item.style.borderLeft = m.kind === "handoff" ? "3px solid #ff7d00" : "3px solid #165dff";
+      const row = document.createElement("div");
+      row.className = "row";
+      const kindLabel = m.kind === "handoff" ? "🙋 转人工" : (m.kind === "reply" ? "💬 待审回复" : "⚙️ 写操作");
+      row.innerHTML = `<b>${kindLabel}</b> <span style="color:#86909c">${(m.id||'').slice(0,12)} · ${m.intent||''}</span>`;
+      const ok = document.createElement("button");
+      ok.className = "btn";
+      ok.textContent = "✅ 通过发送";
+      ok.onclick = async () => {
+        await fetch(`/v1/moderation/${m.id}/approve`, { method: "POST" });
+        refreshModeration();
+        addMsg("system", "✅ 已审批通过并加入发送队列：" + (m.content||'').slice(0,30));
+      };
+      const no = document.createElement("button");
+      no.className = "btn secondary";
+      no.textContent = "❌ 拒绝";
+      no.style.marginLeft = "6px";
+      no.onclick = async () => {
+        await fetch(`/v1/moderation/${m.id}/reject`, { method: "POST" });
+        refreshModeration();
+        addMsg("system", "❌ 已拒绝该待审项");
+      };
+      row.appendChild(ok);
+      row.appendChild(no);
+      item.appendChild(row);
+      const detail = document.createElement("div");
+      detail.style.cssText = "color:#86909c;font-size:12px;margin-top:4px;word-break:break-all;";
+      detail.textContent = (m.content || '').slice(0,120) + "  [" + (m.reason_code || '') + "]";
+      item.appendChild(detail);
+      el.appendChild(item);
+    });
+  } catch (e) {}
+}
+
+// 事件绑定
+document.querySelectorAll(".scene-tab").forEach((t) => {
+  t.addEventListener("click", () => switchScene(t.dataset.scene));
+});
+sendBtn.addEventListener("click", () => sendMessage(inputEl.value, SCENES[currentScene].customerId));
+inputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendMessage(inputEl.value, SCENES[currentScene].customerId);
+});
+document.getElementById("takeOverBtn").addEventListener("click", () => handleHandoff("take_over"));
+document.getElementById("releaseBtn").addEventListener("click", () => handleHandoff("release"));
+document.getElementById("manualReplyBtn").addEventListener("click", sendManualReply);
+
+// 请求浏览器通知权限
+if ("Notification" in window && Notification.permission === "default") {
+  Notification.requestPermission();
+}
+
+// 初始化
+healthCheck();
+switchScene("pre");
+refreshModeration();
+setInterval(healthCheck, 15000);
+setInterval(refreshModeration, 5000);
+</script>
+</body>
+</html>
