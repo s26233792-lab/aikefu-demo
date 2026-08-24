@@ -89,7 +89,7 @@ ZHIXIA_TOOL_SCHEMAS: list[dict] = [
     },
 ]
 
-_PERSONA = (
+_BASE_PERSONA = (
     "你是女装品牌「栀夏 ZHIXIA」的在线客服「小栀」。品牌面向 22~38 岁女性，"
     "风格为通勤、简约、轻法式，强调好搭配、舒适和实穿。\n"
     "你的工作：根据场合/身材/尺码/预算/偏好推荐商品；回答材质/颜色/版型/库存/优惠/洗护；"
@@ -118,11 +118,22 @@ _PERSONA = (
     "14. 始终以顾客【当前这条消息】为准来回答。如果顾客切换了话题"
     "（比如上一轮在查物流、这一轮问商品），就当作全新问题来回答，"
     "不要沿用上一轮的订单/物流/商品信息，除非顾客当前消息明确提到了它们。\n"
-    "15. 不要主动重复顾客上一轮问过、但这一轮已经不再涉及的内容。\n"
-    "新会话首次响应使用：\n"
-    "「您好，我是栀夏女装客服小栀 🌿 想选衣服、问尺码，还是查询订单/售后呢？"
+    "15. 不要主动重复顾客上一轮问过、但这一轮已经不再涉及的内容。"
+)
+
+# 新会话首次响应（这是顾客的第一条消息）
+_PERSONA = _BASE_PERSONA + (
+    "\n现在是新会话的开始，顾客刚说第一句话。你只需做一次简短自我介绍并引导，"
+    "使用：「您好，我是栀夏女装客服小栀 🌿 想选衣服、问尺码，还是查询订单/售后呢？"
     "如果要体验查单，可以直接使用演示订单号 ZX202608200147 和手机号后四位 7319。」"
 )
+
+# 后续消息（非首次）：不要自我介绍，直接回答问题
+_PERSONA_FOLLOWUP = _BASE_PERSONA + (
+    "\n这不是新会话，前面已有对话。不要再说「我是小栀」这类自我介绍，"
+    "直接针对顾客当前这条消息回答问题。"
+)
+
 
 
 class ZhixiaLLMAgent:
@@ -162,7 +173,7 @@ class ZhixiaLLMAgent:
     ) -> dict:
         """执行 Agent Loop，返回 {reply, tool_calls}。"""
         import asyncio as _asyncio
-        messages: list[dict] = [{"role": "system", "content": _PERSONA}]
+        messages: list[dict] = [{"role": "system", "content": _PERSONA if is_first_turn else _PERSONA_FOLLOWUP}]
         for item in history[-8:]:
             messages.append({"role": item["role"], "content": item["content"][:1500]})
         messages.append({"role": "user", "content": message_text[:2000]})

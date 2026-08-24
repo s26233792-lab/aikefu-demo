@@ -28,7 +28,7 @@ HANDOFF_KEYWORDS = (
 
 # 话题分组关键词：用于检测顾客是否切换话题（避免历史上下文污染）
 _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
-    "product": ("推荐", "什么", "买", "款", "颜色", "尺码", "材质", "面料", "价格", "多少钱", "白衬衫", "西装", "裙子", "开衫", "阔腿裤", "背心", "穿搭", "通勤", "面试", "约会"),
+    "product": ("推荐", "买", "款", "颜色", "尺码", "材质", "面料", "价格", "多少钱", "白衬衫", "西装", "裙子", "开衫", "阔腿裤", "背心", "穿搭", "通勤", "面试", "约会", "有货", "库存", "深灰", "灰色", "卡其", "黑色", "白色", "雾蓝", "奶杏", "酒红", "珍珠白", "M码", "L码", "S码", "XL码", "胸围", "腰围", "臀围", "身高", "体重"),
     "order": ("订单", "查单", "下单", "改地址", "发货", "取消"),
     "logistics": ("物流", "快递", "到哪", "几天到", "签收", "运单", "轨迹", "派送"),
     "aftersale": ("退", "换货", "退款", "售后", "七无", "价保", "补偿"),
@@ -36,9 +36,14 @@ _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
     "chitchat": ("你好", "在吗", "谢谢", "再见", "你是谁", "你们"),
 }
 
+# 指代词：含这些词说明是"跟随上一轮话题"，不应裁历史
+_REFERENCE_WORDS = ("那", "这个", "这", "它", "上面", "刚才", "这款", "那款", "那件", "它家", "就它", "这个有", "那有")
+
 
 def detect_topic(text: str) -> str:
-    """识别消息主题分组。"""
+    """识别消息主题分组。含指代词时返回 'reference'（跟随上文）。"""
+    if any(w in text for w in _REFERENCE_WORDS):
+        return "reference"
     for topic, words in _TOPIC_GROUPS.items():
         if any(w in text for w in words):
             return topic
@@ -54,22 +59,21 @@ class ZhixiaRuntime:
     def _build_llm_history(text: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
         """裁剪历史，避免话题切换时上一轮内容污染回答。
 
-        - 若当前消息是最新话题，保留最近 2 轮（同一话题上下文有助理解指代）；
-        - 若检测到话题切换，只保留当前话题相关轮 + 明确"切换话题"提示。
+        - 含指代词（"那/这个/它"）→ 跟随上文，不裁剪，保留最近若干轮；
+        - 同一个话题 → 保留最近同话题轮次；
+        - 切换到全新话题 → 清空历史。
         """
         current_topic = detect_topic(text)
+        # 指代或无法识别时，尽量保留最近历史（帮助理解指代）
+        if current_topic in ("reference", "other"):
+            return history[-6:]
+        # 同话题：保留最近同话题轮次（最多6轮）
         filtered: list[dict[str, str]] = []
-        # 从后往前保留与当前话题一致的轮次
         for item in reversed(history):
-            if detect_topic(item.get("content", "")) == current_topic:
+            if detect_topic(item.get("content", "")) in (current_topic, "reference", "other"):
                 filtered.append(item)
-            elif len(filtered) >= 4:
+            if len(filtered) >= 6:
                 break
-        # 话题一致的历史保留最多 4 轮
-        filtered = filtered[:4]
-        if history and not filtered:
-            # 明确切换话题：不带旧上下文
-            filtered = []
         return list(reversed(filtered))
 
     def _tool_executor(self):
@@ -137,9 +141,11 @@ class ZhixiaRuntime:
         if self.llm_agent is not None:
             try:
                 llm_history = self._build_llm_history(text, history)
+                is_first = len(history) == 0
                 result = await self.llm_agent.run(
                     message_text=text, history=llm_history,
                     tool_executor=self._tool_executor(),
+                    is_first_turn=is_first,
                 )
                 reply = result["reply"]
                 tool_calls = result["tool_calls"]
