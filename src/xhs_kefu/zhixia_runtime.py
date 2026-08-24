@@ -26,11 +26,51 @@ HANDOFF_KEYWORDS = (
     "转人工", "人工客服", "骗子", "欺诈", "气死", "垃圾",
 )
 
+# 话题分组关键词：用于检测顾客是否切换话题（避免历史上下文污染）
+_TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
+    "product": ("推荐", "什么", "买", "款", "颜色", "尺码", "材质", "面料", "价格", "多少钱", "白衬衫", "西装", "裙子", "开衫", "阔腿裤", "背心", "穿搭", "通勤", "面试", "约会"),
+    "order": ("订单", "查单", "下单", "改地址", "发货", "取消"),
+    "logistics": ("物流", "快递", "到哪", "几天到", "签收", "运单", "轨迹", "派送"),
+    "aftersale": ("退", "换货", "退款", "售后", "七无", "价保", "补偿"),
+    "member": ("会员", "积分", "等级", "成长值", "券"),
+    "chitchat": ("你好", "在吗", "谢谢", "再见", "你是谁", "你们"),
+}
+
+
+def detect_topic(text: str) -> str:
+    """识别消息主题分组。"""
+    for topic, words in _TOPIC_GROUPS.items():
+        if any(w in text for w in words):
+            return topic
+    return "other"
+
 
 class ZhixiaRuntime:
     def __init__(self, *, llm_agent: ZhixiaLLMAgent | None = None, tools: ZhixiaTools | None = None) -> None:
         self.llm_agent = llm_agent
         self.tools = tools or ZhixiaTools()
+
+    @staticmethod
+    def _build_llm_history(text: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
+        """裁剪历史，避免话题切换时上一轮内容污染回答。
+
+        - 若当前消息是最新话题，保留最近 2 轮（同一话题上下文有助理解指代）；
+        - 若检测到话题切换，只保留当前话题相关轮 + 明确"切换话题"提示。
+        """
+        current_topic = detect_topic(text)
+        filtered: list[dict[str, str]] = []
+        # 从后往前保留与当前话题一致的轮次
+        for item in reversed(history):
+            if detect_topic(item.get("content", "")) == current_topic:
+                filtered.append(item)
+            elif len(filtered) >= 4:
+                break
+        # 话题一致的历史保留最多 4 轮
+        filtered = filtered[:4]
+        if history and not filtered:
+            # 明确切换话题：不带旧上下文
+            filtered = []
+        return list(reversed(filtered))
 
     def _tool_executor(self):
         """工具执行器：注入可信上下文，写操作沙箱化。"""
@@ -40,6 +80,11 @@ class ZhixiaRuntime:
                 return self.tools.product_lookup(sku=args.get("sku"))
             if name == "order_lookup":
                 return self.tools.order_lookup(
+                    order_id=args.get("order_id", ""),
+                    phone_last4=args.get("phone_last4"),
+                )
+            if name == "logistics_lookup":
+                return self.tools.logistics_lookup(
                     order_id=args.get("order_id", ""),
                     phone_last4=args.get("phone_last4"),
                 )
@@ -88,11 +133,12 @@ class ZhixiaRuntime:
                 "handoff_reason": handoff_reason,
             }
 
-        # 4. LLM 回复
+        # 4. LLM 回复（历史先做话题裁剪，避免旧话题污染）
         if self.llm_agent is not None:
             try:
+                llm_history = self._build_llm_history(text, history)
                 result = await self.llm_agent.run(
-                    message_text=text, history=history,
+                    message_text=text, history=llm_history,
                     tool_executor=self._tool_executor(),
                 )
                 reply = result["reply"]

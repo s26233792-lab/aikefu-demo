@@ -77,6 +77,18 @@ class ZhixiaTools:
     def member_lookup(self, phone_last4: str) -> dict | None:
         return deepcopy(self._members_by_phone.get(str(phone_last4).strip()))
 
+    # ---------- 物流轨迹（规则生成模拟）----------
+
+    def logistics_lookup(self, order_id: str, phone_last4: str | None = None) -> dict | None:
+        """查物流轨迹。先核验订单，再用规则生成轨迹。"""
+        order = self.order_lookup(order_id, phone_last4)
+        if order is None:
+            return None
+        if isinstance(order, dict) and order.get("error"):
+            return order  # 核验失败
+        from .zhixia_logistics import generate_trace
+        return generate_trace(order)
+
     # ---------- 写操作（沙箱，需人工审批）----------
 
     def modify_address(self, order_id: str, new_address: str) -> dict:

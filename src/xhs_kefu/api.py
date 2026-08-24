@@ -157,6 +157,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result["moderation_id"] = mod_id
         return result
 
+    @app.get("/zhixia/logistics")
+    async def zhixia_logistics(
+        order_id: str,
+        phone_last4: str = "",
+        x_api_key: str | None = Header(default=None),
+    ):
+        """查询模拟物流轨迹（规则生成）。"""
+        _auth(x_api_key)
+        result = zhixia_runtime.tools.logistics_lookup(order_id, phone_last4 or None)
+        if result is None:
+            raise HTTPException(status_code=404, detail="订单不存在，或核验信息不匹配")
+        return result
+
     def _auth(x_api_key: str | None = Header(default=None)) -> None:
         if settings.api_key and x_api_key != settings.api_key:
             raise HTTPException(status_code=401, detail="invalid api key")

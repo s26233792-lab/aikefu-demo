@@ -6,7 +6,7 @@
 <title>栀夏 ZHIXIA 女装客服 Agent · Demo</title>
 <style>
   :root {
-    --xhs-red: #ff2442;
+    --xhs-red: #165dff;
     --xhs-bg: #f7f8fa;
     --panel-bg: #ffffff;
     --border: #e5e6eb;
@@ -36,7 +36,7 @@
     justify-content: space-between;
   }
   header .logo { font-weight: 700; color: var(--xhs-red); font-size: 18px; display:flex; align-items:center; gap:8px; }
-  header .logo .badge { font-size:12px; background:#ffeef0; color:var(--xhs-red); padding:2px 8px; border-radius:10px; font-weight:500; }
+  header .logo .badge { font-size:12px; background:#eaf1ff; color:var(--xhs-red); padding:2px 8px; border-radius:10px; font-weight:500; }
   header .status { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--green); }
   .dot.warn { background: var(--orange); }
@@ -92,7 +92,7 @@
   }
   .trace-step .kind.tool { background:#e8ffee; color:var(--green); }
   .trace-step .kind.policy { background:#fff3e0; color:var(--orange); }
-  .trace-step .kind.action { background:#ffeef0; color:var(--xhs-red); }
+  .trace-step .kind.action { background:#fff7e6; color:var(--orange); }
   .trace-step .kind.security { background:#ffd5d5; color:#c00; }
   .trace-step .name { font-weight:600; }
   .trace-step .status-ok { color: var(--green); margin-left:auto; }
@@ -100,7 +100,7 @@
   .trace-step .status-pending { color: var(--orange); margin-left:auto; }
   .trace-step .detail { color: var(--muted); font-family: ui-monospace, monospace; font-size:12px; margin-top:4px; word-break:break-all; }
   .trace-reply {
-    background: #fff7f8; border:1px solid #ffd5dc; border-radius:10px;
+    background: #f0f5ff; border:1px solid #d6e4ff; border-radius:10px;
     padding:12px 14px; font-size:13px; line-height:1.6;
   }
   .trace-reply .label { color: var(--xhs-red); font-weight:600; margin-bottom:4px; }
@@ -231,7 +231,7 @@ function kindClass(kind) {
 function renderTrace(response) {
   // 清空后展示该条消息的决策链路
   const container = document.createElement("div");
-  container.style.cssText = "border-left:3px solid #ff2442; padding-left:10px;";
+  container.style.cssText = "border-left:3px solid #165dff; padding-left:10px;";
 
   const intent = document.createElement("div");
   intent.className = "trace-reply";
