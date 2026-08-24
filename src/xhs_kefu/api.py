@@ -12,9 +12,10 @@
 from __future__ import annotations
 
 import hashlib
+import platform
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -44,6 +45,9 @@ class ZhixiaRequest(BaseModel):
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
+    effective_llm_mode = (
+        "llm" if settings.llm_mode == "llm" and settings.llm_api_key else "rules"
+    )
 
     # 确保数据库目录存在
     import os
@@ -54,14 +58,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     rule = CompensationRule.from_file(settings.policy_path) if settings.policy_path.exists() else CompensationRule.defaults()
     policy = PolicyEngine(rule)
     planner = build_planner(
-        settings.llm_mode,
+        effective_llm_mode,
         base_url=settings.llm_base_url,
         model=settings.llm_model,
         api_key=settings.llm_api_key,
     )
     llm_agent = None
     intent_classifier = None
-    if settings.llm_mode == "llm" and settings.llm_api_key:
+    if effective_llm_mode == "llm":
         from .llm_agent import LLMAgent
         from .intent_classifier import IntentClassifier
         llm_agent = LLMAgent(
@@ -88,12 +92,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="小红书千帆客服 Agent", version="1.0.0")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://127.0.0.1:18081", "http://localhost:18081"],
         allow_methods=["*"],
         allow_headers=["*"],
     )
     app.state.runtime = runtime
     app.state.settings = settings
+    app.state.effective_llm_mode = effective_llm_mode
+    app.add_event_handler("shutdown", store.close)
 
     from .web.router import router as web_router
     app.include_router(web_router)
@@ -105,8 +111,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 栀夏 ZHIXIA 女装客服 Agent（agent.md 规格）
     from .zhixia_agent import ZhixiaLLMAgent
     from .zhixia_runtime import ZhixiaRuntime
+    from .safety import redact_pii
     zhixia_llm = None
-    if settings.llm_api_key:
+    if effective_llm_mode == "llm":
         zhixia_llm = ZhixiaLLMAgent(
             base_url=settings.llm_base_url, model=settings.llm_model, api_key=settings.llm_api_key,
         )
@@ -121,9 +128,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = await zhixia_runtime.handle(text=req.text, history=history)
         # 持久化会话
         now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        safe_user_text = redact_pii(req.text)
         store.save_turn(
             dedupe_key=f"{session_key}|{hashlib.sha1(req.text.encode()).hexdigest()[:12]}",
-            session_key=session_key, role="user", content=req.text, created_at=now,
+            session_key=session_key, role="user", content=safe_user_text, created_at=now,
         )
         if result.get("reply"):
             store.save_turn(
@@ -138,6 +146,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         elif disposition == "require_approval":
             status = "pending_approval"
             needs_approval = True
+        elif disposition == "reject":
+            status = "rejected"
+            needs_approval = False
         else:
             status = "resolved"
             needs_approval = False
@@ -160,14 +171,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/zhixia/logistics")
     async def zhixia_logistics(
         order_id: str,
-        phone_last4: str = "",
+        phone_last4: str = Query(..., pattern=r"^\d{4}$"),
         x_api_key: str | None = Header(default=None),
     ):
         """查询模拟物流轨迹（规则生成）。"""
         _auth(x_api_key)
-        result = zhixia_runtime.tools.logistics_lookup(order_id, phone_last4 or None)
+        result = zhixia_runtime.tools.logistics_lookup(order_id, phone_last4)
         if result is None:
             raise HTTPException(status_code=404, detail="订单不存在，或核验信息不匹配")
+        if result.get("error") == "verify_failed":
+            raise HTTPException(status_code=403, detail=result.get("reason"))
+        if result.get("error"):
+            raise HTTPException(status_code=400, detail=result.get("reason"))
         return result
 
     def _auth(x_api_key: str | None = Header(default=None)) -> None:
@@ -176,10 +191,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health():
+        system = platform.system()
         return {
             "status": runtime.health()["status"],
-            "llm_mode": settings.llm_mode,
-            "llm_model": settings.llm_model,
+            "llm_mode": effective_llm_mode,
+            "llm_model": settings.llm_model if effective_llm_mode == "llm" else "规则降级",
+            "platform": "macOS" if system == "Darwin" else system,
         }
 
     @app.post("/v1/decide")
@@ -240,7 +257,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/v1/moderation")
     async def list_moderation(status: str | None = None, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
-        return {"moderation": runtime.list_moderation(status)}
+        items = runtime.list_moderation(status)
+        for item in items:
+            if str(item.get("session_key", "")).startswith("zhixia|"):
+                disposition = (
+                    "handoff_human" if item.get("kind") == "handoff" else "require_approval"
+                )
+                item["human_prompt"] = zhixia_runtime.build_human_prompt(
+                    intent=str(item.get("intent") or "handoff"),
+                    reason=str(item.get("reason_code") or "NEEDS_HUMAN"),
+                    disposition=disposition,
+                )
+        return {"moderation": items}
 
     @app.post("/v1/moderation/{mod_id}/approve")
     async def approve_moderation(mod_id: str, x_api_key: str | None = Header(default=None)):

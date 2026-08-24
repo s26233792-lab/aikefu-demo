@@ -29,6 +29,7 @@ class SQLiteStore:
                 )
                 """
             )
+
             self.connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS decisions (
@@ -107,6 +108,10 @@ class SQLiteStore:
                 )
                 """
             )
+
+    def close(self) -> None:
+        """释放数据库连接，便于服务优雅退出和测试清理临时文件。"""
+        self.connection.close()
 
     def recent_turns(self, session_key: str, limit: int = 8) -> list[dict[str, str]]:
         rows = self.connection.execute(

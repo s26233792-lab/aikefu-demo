@@ -9,16 +9,34 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
+from urllib.parse import urlsplit
 from typing import Any
 
 import websocket  # type: ignore
 
-CDP_HTTP = "http://127.0.0.1:9222"
+def cdp_http() -> str:
+    """返回可配置的本地 CDP 地址。"""
+    legacy_base = os.environ.get("XHS_CDP_BASE", "").strip()
+    if legacy_base and not os.environ.get("XHS_QIANFAN_CDP_PORT"):
+        parsed = urlsplit(legacy_base)
+        if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost"}:
+            raise ValueError("XHS_CDP_BASE 只允许本机 http://127.0.0.1 或 localhost 地址")
+        raw = str(parsed.port or 9222)
+    else:
+        raw = os.environ.get("XHS_QIANFAN_CDP_PORT", "9222")
+    try:
+        port = int(raw)
+    except ValueError as exc:
+        raise ValueError("XHS_QIANFAN_CDP_PORT 必须是有效端口号") from exc
+    if not 1 <= port <= 65535:
+        raise ValueError("XHS_QIANFAN_CDP_PORT 必须在 1～65535 之间")
+    return f"http://127.0.0.1:{port}"
 
 
 def list_targets() -> list[dict]:
-    with urllib.request.urlopen(f"{CDP_HTTP}/json/list", timeout=5) as resp:
+    with urllib.request.urlopen(f"{cdp_http()}/json/list", timeout=5) as resp:
         return json.load(resp)
 
 

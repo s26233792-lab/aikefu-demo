@@ -20,16 +20,20 @@ import asyncio
 import hashlib
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
+
+try:
+    from .qianfan_launcher import chromium_args, default_profile_dir
+except ImportError:  # 兼容直接执行脚本
+    from qianfan_launcher import chromium_args, default_profile_dir
 
 # 千帆网页版工作台地址（商家专业号客服后台）
 QIANFAN_HOME_URL = "https://ark.xiaohongshu.com/app-system/home"
 
 # 登录态 profile（由 workers/qianfan_login.py 扫码后持久化）
-_DEFAULT_PROFILE = str(Path(__file__).resolve().parent.parent / "data" / "qianfan-profile")
+_DEFAULT_PROFILE = str(default_profile_dir())
 
 # DOM 选择器 —— 已按 2026-08-19 登录后真实页面结构校准
 # 关键发现：千帆客服聊天容器用 im-chat-* / chat-* 前缀，输入框为 textarea.input-base
@@ -105,7 +109,7 @@ class QianfanBrowserWorker:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 headless=self.headless,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                args=chromium_args(),
                 viewport={"width": 1280, "height": 900},
             )
             page = context.pages[0] if context.pages else await context.new_page()

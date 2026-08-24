@@ -19,19 +19,24 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import time
 from typing import Any
 
 import httpx
 
-from cdp_client import CdpSession, find_cstools_page
-from notifier import notify as system_notify
+try:
+    from .cdp_client import CdpSession, find_cstools_page
+    from .notifier import notify as system_notify
+except ImportError:  # 兼容直接执行 python workers/qianfan_cdp_worker.py
+    from cdp_client import CdpSession, find_cstools_page
+    from notifier import notify as system_notify
 
 # 决策 API 地址
 DECISION_URL = "http://127.0.0.1:18081"
 
 # 店铺名（客服消息开头会带店铺名 + 时间 + 已读；顾客消息不带）
-STORE_NAME = "Icetea冻柠"
+STORE_NAME = os.environ.get("XHS_QIANFAN_STORE_NAME", "").strip()
 
 # 系统消息特征（不是顾客消息，需过滤）
 SYSTEM_PREFIXES = ("客服机器人", "接入会话", "匹配到主要问法", "会话长时间无新消息", "系统")
@@ -71,11 +76,12 @@ def _is_customer_message(text: str) -> bool:
     if "已读" in t:
         return False
     # 排除系统前缀
-    for prefix in SYSTEM_PREFIXES + (STORE_NAME,):
+    store_prefixes = (STORE_NAME,) if STORE_NAME else ()
+    for prefix in SYSTEM_PREFIXES + store_prefixes:
         if t.startswith(prefix):
             return False
     # 排除纯状态
-    if t in ("已读", "发送", STORE_NAME, ""):
+    if t in ("已读", "发送", "") or (STORE_NAME and t == STORE_NAME):
         return False
     return True
 
@@ -194,8 +200,13 @@ class QianfanCdpWorker:
 
     async def _poll_outbox(self, session: CdpSession) -> None:
         """轮询待发送队列，把人工审批通过/手写的回复回填到千帆。"""
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{self.decision_url.rstrip('/')}/v1/outbox/pull")
+            resp = await client.get(
+                f"{self.decision_url.rstrip('/')}/v1/outbox/pull", headers=headers
+            )
             resp.raise_for_status()
             data = resp.json()
         for item in data.get("outbox", []):
@@ -210,6 +221,7 @@ class QianfanCdpWorker:
                 await client.post(
                     f"{self.decision_url.rstrip('/')}/v1/outbox/{oid}/ack",
                     json={"status": "sent"},
+                    headers=headers,
                 )
 
     async def _poll_once(self, session: CdpSession) -> None:
@@ -381,7 +393,6 @@ _CLICK_SEND_JS = r"""
 
 
 async def main() -> None:
-    import os
     worker = QianfanCdpWorker(
         decision_url=os.environ.get("XHS_DECISION_URL", DECISION_URL),
         api_key=os.environ.get("XHS_API_KEY"),

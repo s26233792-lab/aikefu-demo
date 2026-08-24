@@ -1,142 +1,154 @@
-"""人工介入提醒模块（桌面端，零额外依赖）。
+"""千帆人工介入的跨平台桌面提醒。
 
-当需要人工介入时，用 Win32 API 把真人从别处"拉回来关注千帆窗口"：
-1. 窗口置顶：把千帆客服工作台窗口弹到最前（SetForegroundWindow / ShowWindow）；
-2. 任务栏闪烁：FlashWindowEx 让任务栏图标不断闪烁，直到真人点击；
-3. 声音提示：winsound 播放系统提示音。
-
-这是"电脑前 + 频繁 + 及时"场景下最可靠的提醒方式——不依赖注入千帆 DOM
-（刷新就丢），也不依赖额外的 Web 审批台页面。
+Windows 使用 Win32 置顶、任务栏闪烁和系统声音；macOS 使用 AppleScript 激活
+千帆、发送系统通知并播放系统声音。失败时只降级提醒，不影响 Worker 主循环。
 """
 from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes as wt
+import os
+import subprocess
 import sys
-import time
 from threading import Thread
 
-# 千帆客户端进程名（MainWindowTitle 是 'eva'）
-_QIANFAN_TITLE_PREFIX = "eva"
 
-# Win32 常量
-FLASHW_ALL = 0x00000003       # 闪烁任务栏 + 窗口标题
-FLASHW_TIMERNOFG = 0x0000000C  # 持续闪烁直到获得焦点
-SW_RESTORE = 9
-SW_SHOW = 5
+def _app_names() -> list[str]:
+    configured = os.environ.get("XHS_QIANFAN_APP_NAME", "").strip()
+    return [name for name in (configured, "千帆客服工作台", "eva") if name]
 
 
-class FLASHWINFO(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wt.UINT),
-        ("hwnd", wt.HWND),
-        ("dwFlags", wt.DWORD),
-        ("uCount", wt.UINT),
-        ("dwTimeout", wt.DWORD),
-    ]
+def _run_osascript(script: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["osascript", "-e", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        return result.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
-def _find_qianfan_hwnd() -> int | None:
-    """找到千帆主窗口句柄（按标题 'eva' 匹配）。"""
+def _windows_find_hwnd() -> int | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    import ctypes.wintypes as wt
+
     user32 = ctypes.windll.user32
-
-    def enum_callback(hwnd, lParam):
-        length = user32.GetWindowTextLengthW(hwnd)
-        if length == 0:
-            return True
-        buf = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buf, length + 1)
-        title = buf.value
-        if title and title.startswith(_QIANFAN_TITLE_PREFIX):
-            # 用可变容器保存句柄
-            lParam.append(hwnd)
-            return False  # 停止枚举
-        return True
-
-    found: list[int] = []
-    EnumWindowsProc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, ctypes.POINTER(wt.INT))
-    # 简化：用 list 作为 lParam 传递
-    # ctypes 回调不能直接修改 python list，这里用一个简单遍历方式
-    # 直接枚举所有顶级窗口
     result: list[int] = []
+    title_prefixes = tuple(_app_names())
+    enum_proc = ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
 
-    @EnumWindowsProc
-    def cb(hwnd, lparam):
+    @enum_proc
+    def callback(hwnd, _lparam):
         length = user32.GetWindowTextLengthW(hwnd)
         if length > 0:
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
-            if buf.value.startswith(_QIANFAN_TITLE_PREFIX):
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, length + 1)
+            if buffer.value.startswith(title_prefixes):
                 result.append(hwnd)
                 return False
         return True
 
-    user32.EnumWindows(cb, 0)
+    user32.EnumWindows(callback, 0)
     return result[0] if result else None
 
 
 def bring_to_front() -> bool:
-    """把千帆窗口置顶并还原（若最小化则还原）。"""
-    hwnd = _find_qianfan_hwnd()
+    """激活千帆窗口；未找到或缺少系统权限时返回 False。"""
+    if sys.platform == "darwin":
+        for name in _app_names():
+            safe_name = name.replace("\\", "\\\\").replace('"', '\\"')
+            if _run_osascript(f'tell application "{safe_name}" to activate'):
+                return True
+        return False
+    if sys.platform != "win32":
+        return False
+
+    import ctypes
+
+    hwnd = _windows_find_hwnd()
     if not hwnd:
         return False
     user32 = ctypes.windll.user32
-    kernel32 = ctypes.windll.kernel32
-    # 若窗口最小化，先还原
     if user32.IsIconic(hwnd):
-        user32.ShowWindow(hwnd, SW_RESTORE)
-    # 置顶
-    user32.ShowWindow(hwnd, SW_SHOW)
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    user32.ShowWindow(hwnd, 5)  # SW_SHOW
     user32.SetForegroundWindow(hwnd)
     return True
 
 
 def flash_taskbar(continuous: bool = True) -> None:
-    """让千帆任务栏图标闪烁（continuous=True 时持续闪烁直到获得焦点）。"""
-    hwnd = _find_qianfan_hwnd()
+    """Windows 闪烁任务栏；macOS 发送通知作为等价提醒。"""
+    if sys.platform == "darwin":
+        message = "有会话需要人工立即处理" if continuous else "有一条回复等待人工审核"
+        _run_osascript(
+            f'display notification "{message}" with title "小红书千帆客服" sound name "Glass"'
+        )
+        return
+    if sys.platform != "win32":
+        return
+
+    import ctypes
+    import ctypes.wintypes as wt
+
+    hwnd = _windows_find_hwnd()
     if not hwnd:
         return
 
-    info = FLASHWINFO()
-    info.cbSize = ctypes.sizeof(FLASHWINFO)
+    class FlashWindowInfo(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wt.UINT),
+            ("hwnd", wt.HWND),
+            ("dwFlags", wt.DWORD),
+            ("uCount", wt.UINT),
+            ("dwTimeout", wt.DWORD),
+        ]
+
+    info = FlashWindowInfo()
+    info.cbSize = ctypes.sizeof(FlashWindowInfo)
     info.hwnd = hwnd
-    info.dwFlags = FLASHW_TIMERNOFG if continuous else FLASHW_ALL
+    info.dwFlags = 0x0000000C if continuous else 0x00000003
     info.uCount = 0 if continuous else 5
     info.dwTimeout = 0
     ctypes.windll.user32.FlashWindowEx(ctypes.byref(info))
 
 
 def play_sound() -> None:
-    """播放系统提示音（后台线程，不阻塞）。"""
-    def _play():
+    """非阻塞播放平台系统提示音。"""
+    def _play() -> None:
         try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
-        except Exception:  # noqa: BLE001
+            if sys.platform == "darwin":
+                subprocess.run(
+                    ["afplay", "/System/Library/Sounds/Glass.aiff"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=5,
+                )
+            elif sys.platform == "win32":
+                import winsound
+
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+            else:
+                print("\a", end="", flush=True)
+        except (OSError, subprocess.SubprocessError):
             pass
+
     Thread(target=_play, daemon=True).start()
 
 
 def notify(level: str = "warning") -> dict:
-    """综合提醒：置顶 + 闪烁 + 声音。
-
-    level: "warning"（待审，温和）| "critical"（转人工，强烈）。
-
-    返回执行结果字典。
-    """
+    """综合提醒：激活窗口、系统通知/任务栏提醒、声音。"""
     brought = bring_to_front()
-    if level == "critical":
-        flash_taskbar(continuous=True)
+    flash_taskbar(continuous=level == "critical")
+    # macOS 的 display notification 已带声音，避免重复播放。
+    if sys.platform != "darwin":
         play_sound()
-    else:
-        flash_taskbar(continuous=False)
-        play_sound()
-    return {"brought_to_front": brought, "level": level}
+    return {"brought_to_front": brought, "level": level, "platform": sys.platform}
 
 
 if __name__ == "__main__":
-    # 测试提醒
-    print("测试提醒（3 秒后触发）...")
-    time.sleep(3)
-    result = notify("critical")
-    print("提醒结果:", result)
+    print("提醒测试结果：", notify("critical"))

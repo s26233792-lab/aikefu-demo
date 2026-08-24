@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
-sys.path.insert(0, ".")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR / "src"))
 
 from xhs_kefu.mvp.adapter import PlatformMessage
 from xhs_kefu.mvp.pipeline import MVPPipeline

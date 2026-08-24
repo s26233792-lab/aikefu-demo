@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "src")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR / "src"))
 
 from xhs_kefu.config import Settings
 from xhs_kefu.zhixia_agent import ZhixiaLLMAgent
