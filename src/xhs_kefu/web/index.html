@@ -152,6 +152,8 @@
   }
   @media (max-width: 480px) {
     header .logo { align-items:flex-start; }
+    button, .scene-tab, .btn { min-height:44px; }
+    input { min-height:44px; }
     .scene-tab { font-size:12px; padding:7px 10px; }
     .input-bar .btn { padding-inline:15px; }
     .trace { padding:12px; }
@@ -197,12 +199,16 @@
       <div id="moderation"></div>
       <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
         <h3 style="font-size:13px;color:#86909c;margin-bottom:6px;">✍️ 人工手写回复（发送到千帆）</h3>
+        <label for="manualCustomerSelect" style="display:block;color:#738078;font-size:12px;margin-bottom:4px;">目标顾客（来自待办）</label>
+        <select id="manualCustomerSelect" style="width:100%;padding:8px 10px;border:1px solid #ddd8cb;border-radius:8px;background:#fff;font-size:13px;margin-bottom:6px;">
+          <option value="">暂无可选待办顾客</option>
+        </select>
         <label class="sr-only" for="manualReplyInput">人工回复内容</label>
         <input id="manualReplyInput" placeholder="输入要发给当前顾客的消息…" style="width:100%;padding:8px 10px;border:1px solid #ddd8cb;border-radius:8px;font-size:13px;" />
-        <button type="button" class="btn" id="manualReplyBtn" style="font-size:12px;margin-top:6px;">发送手写回复</button>
+        <button type="button" class="btn" id="manualReplyBtn" style="font-size:12px;margin-top:6px;" disabled>发送手写回复</button>
       </div>
       <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
-        <h3 style="font-size:13px;color:#86909c;">会话接管</h3>
+        <h3 style="font-size:13px;color:#86909c;">会话接管（优先使用上方已选待办顾客）</h3>
         <button type="button" class="btn secondary" id="takeOverBtn" style="font-size:12px;">🚫 接管当前会话</button>
         <button type="button" class="btn secondary" id="releaseBtn" style="font-size:12px;margin-left:6px;">✅ 恢复自动回复</button>
         <button type="button" class="btn secondary" id="notificationBtn" style="font-size:12px;margin-left:6px;">开启待办提醒</button>
@@ -300,6 +306,11 @@ const SCENES = {
 
 let currentScene = "pre";
 let isSending = false;
+let isManualReplySending = false;
+let isHandoffUpdating = false;
+let moderationInFlight = false;
+let lastModerationSnapshot = "";
+let moderationTargets = new Map();
 const sessionNonce = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 function currentSessionId() {
@@ -640,27 +651,47 @@ async function refreshActions() {
 }
 
 async function handleHandoff(action) {
-  const sid = currentSessionId();
-  const sessionKey = "zhixia|" + sid;
+  if (isHandoffUpdating) return;
+  isHandoffUpdating = true;
+  const takeOverButton = document.getElementById("takeOverBtn");
+  const releaseButton = document.getElementById("releaseBtn");
+  takeOverButton.disabled = true;
+  releaseButton.disabled = true;
+  const selectedId = document.getElementById("manualCustomerSelect").value;
+  const selectedTarget = moderationTargets.get(selectedId);
+  const sid = selectedTarget ? selectedTarget.customerId : currentSessionId();
+  const sessionKey = selectedTarget ? selectedTarget.sessionKey : "zhixia|" + sid;
   try {
     await fetchJSON("/v1/handoff", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_key: sessionKey, action: action }),
     });
-    addMsg("system", action === "take_over" ? "🚫 已接管会话，Agent 停止自动回复" : "✅ 已恢复自动回复");
+    addMsg("system", (action === "take_over" ? "🚫 已接管会话，Agent 停止自动回复" : "✅ 已恢复自动回复") + `（${sid}）`);
   } catch (error) {
     addMsg("system", "会话状态更新失败：" + error.message);
+  } finally {
+    isHandoffUpdating = false;
+    takeOverButton.disabled = false;
+    releaseButton.disabled = false;
   }
 }
 
 // 手写回复发送到千帆（转人工后的实际操作）
 async function sendManualReply() {
+  if (isManualReplySending) return;
   const input = document.getElementById("manualReplyInput");
+  const button = document.getElementById("manualReplyBtn");
+  const targetSelect = document.getElementById("manualCustomerSelect");
+  const target = moderationTargets.get(targetSelect.value);
   const text = input.value.trim();
+  if (!target) { addMsg("system", "⚠️ 请先从待办中选择要回复的顾客"); return; }
   if (!text) { addMsg("system", "⚠️ 请输入要发送的内容"); return; }
-  const sid = currentSessionId();
-  const sessionKey = "zhixia|" + sid;
+  isManualReplySending = true;
+  input.disabled = true;
+  button.disabled = true;
+  const sid = target.customerId;
+  const sessionKey = target.sessionKey;
   try {
     await fetchJSON("/v1/outbox", {
       method: "POST",
@@ -672,6 +703,11 @@ async function sendManualReply() {
     addMsg("agent", text);
   } catch (error) {
     addMsg("system", "手写回复入队失败：" + error.message);
+  } finally {
+    isManualReplySending = false;
+    input.disabled = false;
+    button.disabled = false;
+    input.focus();
   }
 }
 
@@ -686,13 +722,46 @@ function notifyPending(items) {
   }
 }
 
+function refreshManualTargets(items) {
+  const select = document.getElementById("manualCustomerSelect");
+  const button = document.getElementById("manualReplyBtn");
+  const previous = select.value;
+  moderationTargets = new Map();
+  select.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = items.length ? "请选择待办顾客…" : "暂无可选待办顾客";
+  select.appendChild(placeholder);
+  items.forEach((item) => {
+    const customerId = String(item.customer_id || "").trim();
+    const sessionKey = String(item.session_key || "").trim();
+    if (!customerId || !sessionKey) return;
+    moderationTargets.set(item.id, { customerId, sessionKey });
+    const option = document.createElement("option");
+    option.value = item.id;
+    option.textContent = `${customerId} · ${item.intent || item.reason_code || "待处理"}`;
+    select.appendChild(option);
+  });
+  if (previous && moderationTargets.has(previous)) select.value = previous;
+  else if (moderationTargets.size === 1) select.value = moderationTargets.keys().next().value;
+  button.disabled = moderationTargets.size === 0;
+}
+
 async function refreshModeration() {
+  if (moderationInFlight) return;
+  moderationInFlight = true;
   try {
     const j = await fetchJSON("/v1/moderation?status=pending", {}, 5000);
     const el = document.getElementById("moderation");
-    el.innerHTML = "";
     const items = j.moderation || [];
     notifyPending(items);
+    const snapshot = JSON.stringify(items);
+    if (snapshot === lastModerationSnapshot) return;
+    lastModerationSnapshot = snapshot;
+    refreshManualTargets(items);
+    el.innerHTML = "";
+    el.style.color = "";
+    el.style.fontSize = "";
     if (items.length === 0) {
       el.innerHTML = '<div style="color:#86909c;font-size:13px;">暂无待审批项（普通咨询会自动回复，无需审批）</div>';
       return;
@@ -716,8 +785,11 @@ async function refreshModeration() {
       ok.className = "btn";
       ok.textContent = m.kind === "handoff" ? "标记已接手" : (m.kind === "reply" ? "通过并发送" : "通过");
       ok.onclick = async () => {
+        ok.disabled = true;
+        no.disabled = true;
         try {
           await fetchJSON(`/v1/moderation/${m.id}/approve`, { method: "POST" });
+          lastModerationSnapshot = "";
           refreshModeration();
           const message = m.kind === "handoff"
             ? "✅ 已标记为人工接手"
@@ -725,6 +797,8 @@ async function refreshModeration() {
           addMsg("system", message + "：" + (m.content || "").slice(0, 30));
         } catch (error) {
           addMsg("system", "审批失败：" + error.message);
+          ok.disabled = false;
+          no.disabled = false;
         }
       };
       const no = document.createElement("button");
@@ -733,12 +807,17 @@ async function refreshModeration() {
       no.textContent = "❌ 拒绝";
       no.style.marginLeft = "6px";
       no.onclick = async () => {
+        ok.disabled = true;
+        no.disabled = true;
         try {
           await fetchJSON(`/v1/moderation/${m.id}/reject`, { method: "POST" });
+          lastModerationSnapshot = "";
           refreshModeration();
           addMsg("system", "❌ 已拒绝该待审项");
         } catch (error) {
           addMsg("system", "拒绝操作失败：" + error.message);
+          ok.disabled = false;
+          no.disabled = false;
         }
       };
       row.appendChild(ok);
@@ -775,10 +854,13 @@ async function refreshModeration() {
       el.appendChild(item);
     });
   } catch (error) {
+    lastModerationSnapshot = "";
     const el = document.getElementById("moderation");
     el.textContent = "待办加载失败：" + error.message;
     el.style.color = "#b34f36";
     el.style.fontSize = "13px";
+  } finally {
+    moderationInFlight = false;
   }
 }
 
@@ -808,16 +890,45 @@ document.getElementById("notificationBtn").addEventListener("click", async () =>
     addMsg("system", "当前浏览器不支持桌面通知");
     return;
   }
-  const permission = await Notification.requestPermission();
-  button.textContent = permission === "granted" ? "待办提醒已开启" : "待办提醒未开启";
+  try {
+    const permission = await Notification.requestPermission();
+    button.textContent = permission === "granted" ? "待办提醒已开启" : "待办提醒未开启";
+  } catch (error) {
+    button.textContent = "待办提醒未开启";
+    addMsg("system", "桌面通知开启失败：" + error.message);
+  }
 });
 
 // 初始化
-healthCheck();
 switchScene("pre");
-refreshModeration();
-setInterval(healthCheck, 15000);
-setInterval(refreshModeration, 5000);
+let healthPollTimer = null;
+let moderationPollTimer = null;
+
+async function pollHealth() {
+  if (document.hidden) return;
+  await healthCheck();
+  if (!document.hidden) healthPollTimer = window.setTimeout(pollHealth, 30000);
+}
+
+async function pollModeration() {
+  if (document.hidden) return;
+  await refreshModeration();
+  if (!document.hidden) moderationPollTimer = window.setTimeout(pollModeration, 5000);
+}
+
+function restartPolling() {
+  window.clearTimeout(healthPollTimer);
+  window.clearTimeout(moderationPollTimer);
+  healthPollTimer = null;
+  moderationPollTimer = null;
+  if (!document.hidden) {
+    pollHealth();
+    pollModeration();
+  }
+}
+
+document.addEventListener("visibilitychange", restartPolling);
+restartPolling();
 </script>
 </body>
 </html>

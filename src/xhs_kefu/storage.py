@@ -318,8 +318,9 @@ class SQLiteStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_outbox(self, id: str, status: str) -> None:
+    def mark_outbox(self, id: str, status: str) -> bool:
         with self.connection:
-            self.connection.execute(
+            cursor = self.connection.execute(
                 "UPDATE outbox SET status = ? WHERE id = ?", (status, id)
             )
+        return cursor.rowcount > 0

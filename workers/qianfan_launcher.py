@@ -192,6 +192,7 @@ def doctor() -> dict[str, Any]:
         "cdp_url": cdp_base_url(),
         "cdp_ready": cdp_ready(),
         "decision_api_ready": api_ready(),
+        "api_auth_configured": bool(os.environ.get("XHS_API_KEY", "").strip()),
         "official_download": OFFICIAL_DOWNLOAD_URL,
     }
     report["ready"] = bool(
@@ -208,6 +209,7 @@ def print_doctor(report: dict[str, Any]) -> None:
     print(f"{marks[report['qianfan_app_found']]} 千帆客户端：{report['qianfan_app'] or '未找到'}")
     print(f"{marks[report['cdp_ready']]} CDP：{report['cdp_url']}")
     print(f"{'✅' if report['decision_api_ready'] else 'ℹ️'} 决策 API：{'已启动' if report['decision_api_ready'] else '尚未启动'}")
+    print(f"{'✅' if report['api_auth_configured'] else '⚠️'} API 鉴权：{'已配置' if report['api_auth_configured'] else '未配置（接入真实顾客前请设置 XHS_API_KEY）'}")
     if not report["qianfan_app_found"]:
         print(f"官方下载：{report['official_download']}")
     if system_name() == "Darwin":

@@ -206,6 +206,46 @@ def check_api() -> None:
             assert queued["human_prompt"]["reason"] == "duplicate_charge"
             assert "不要索要银行卡号" in " ".join(queued["human_prompt"]["checklist"])
 
+            # 审批必须只执行一次，并保留真实会话归属，不能硬编码 demo 店铺。
+            test_app.state.runtime.store.add_moderation(
+                id="mod-reply-regression",
+                session_key="zhixia|真实顾客A",
+                customer_id="真实顾客A",
+                kind="reply",
+                content="已核实，请留意退款到账通知。",
+                intent="refund_status",
+                reason_code="REPLY_APPROVAL",
+                created_at="2026-08-25T00:00:00+00:00",
+            )
+            approved = client.post("/v1/moderation/mod-reply-regression/approve")
+            assert approved.status_code == 200
+            assert approved.json()["enqueued"] is True
+            outbox = client.get("/v1/outbox/pull").json()["outbox"]
+            queued_reply = next(item for item in outbox if item["customer_id"] == "真实顾客A")
+            assert queued_reply["session_key"] == "zhixia|真实顾客A"
+            duplicate_approval = client.post("/v1/moderation/mod-reply-regression/approve")
+            assert duplicate_approval.status_code == 409
+            outbox_after_duplicate = client.get("/v1/outbox/pull").json()["outbox"]
+            assert sum(item["customer_id"] == "真实顾客A" for item in outbox_after_duplicate) == 1
+
+            # 非法动作、空目标和错误回执不得进入真实发送链路。
+            invalid_handoff = client.post(
+                "/v1/handoff",
+                json={"session_key": "zhixia|真实顾客A", "action": "delete"},
+            )
+            assert invalid_handoff.status_code == 400
+            missing_target = client.post(
+                "/v1/outbox",
+                json={"session_key": "zhixia|真实顾客A", "customer_id": "", "content": "test"},
+            )
+            assert missing_target.status_code == 400
+            invalid_ack = client.post(
+                f"/v1/outbox/{queued_reply['id']}/ack", json={"status": "mystery"}
+            )
+            assert invalid_ack.status_code == 400
+            missing_ack = client.post("/v1/outbox/out-does-not-exist/ack", json={"status": "sent"})
+            assert missing_ack.status_code == 404
+
 
 def check_api_auth() -> None:
     with tempfile.TemporaryDirectory(prefix="zhixia-auth-") as temp_dir:

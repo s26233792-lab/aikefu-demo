@@ -438,13 +438,24 @@ class AgentRuntime:
         mod = self.store.get_moderation(mod_id)
         if mod is None:
             return {"ok": False, "error": "moderation_not_found"}
+        if mod.get("status") != "pending":
+            return {"ok": False, "error": "moderation_not_pending", "status": mod.get("status")}
         self.store.update_moderation_status(mod_id, "approved")
-        return {"ok": True, "id": mod_id, "kind": mod["kind"], "content": mod["content"], "customer_id": mod["customer_id"]}
+        return {
+            "ok": True,
+            "id": mod_id,
+            "kind": mod["kind"],
+            "content": mod["content"],
+            "customer_id": mod["customer_id"],
+            "session_key": mod["session_key"],
+        }
 
     def reject_moderation(self, mod_id: str) -> dict:
         mod = self.store.get_moderation(mod_id)
         if mod is None:
             return {"ok": False, "error": "moderation_not_found"}
+        if mod.get("status") != "pending":
+            return {"ok": False, "error": "moderation_not_pending", "status": mod.get("status")}
         self.store.update_moderation_status(mod_id, "rejected")
         return {"ok": True, "id": mod_id}
 
@@ -480,7 +491,9 @@ class AgentRuntime:
         return self.store.pull_outbox()
 
     def ack_outbox(self, oid: str, status: str = "sent") -> dict:
-        self.store.mark_outbox(oid, status)
+        updated = self.store.mark_outbox(oid, status)
+        if not updated:
+            return {"ok": False, "error": "outbox_not_found", "id": oid}
         return {"ok": True, "id": oid, "status": status}
 
     def _execute_plan(

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import platform
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -49,9 +50,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         "llm" if settings.llm_mode == "llm" and settings.llm_api_key else "rules"
     )
 
-    # 确保数据库目录存在
-    import os
-    os.makedirs(os.path.dirname(settings.database_path), exist_ok=True)
+    # 确保数据库目录存在；同时兼容 XHS_DB_PATH=xhs_kefu.db 这种当前目录路径。
+    Path(settings.database_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
     store = SQLiteStore(settings.database_path)
     fixtures = Fixtures(settings.data_dir)
@@ -275,7 +275,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _auth(x_api_key)
         result = runtime.approve_moderation(mod_id)
         if not result.get("ok"):
-            raise HTTPException(status_code=404, detail=result.get("error"))
+            status_code = 404 if result.get("error") == "moderation_not_found" else 409
+            raise HTTPException(status_code=status_code, detail=result.get("error"))
         # 审批通过后：仅「reply」类型的待审草稿（LLM 生成的可发送回复）才入发送队列。
         # 「handoff」类型内容是顾客原诉求（如"我要投诉"），绝不能当回复发回给顾客；
         # 「action」类型是写操作，需走写操作执行流程，不是直接发消息。
@@ -283,7 +284,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content = result.get("content", "")
             if content:
                 runtime.enqueue_reply(
-                    session_key=f"demo|xhs_qianfan|STORE-001|{result.get('customer_id', '')}",
+                    session_key=result.get("session_key", ""),
                     customer_id=result.get("customer_id", ""),
                     content=content,
                     channel="xhs_qianfan",
@@ -296,7 +297,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _auth(x_api_key)
         result = runtime.reject_moderation(mod_id)
         if not result.get("ok"):
-            raise HTTPException(status_code=404, detail=result.get("error"))
+            status_code = 404 if result.get("error") == "moderation_not_found" else 409
+            raise HTTPException(status_code=status_code, detail=result.get("error"))
         return result
 
     @app.post("/v1/handoff")
@@ -306,11 +308,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         _auth(x_api_key)
         body = body or {}
-        session_key = body.get("session_key", "")
+        session_key = str(body.get("session_key", "")).strip()
         if not session_key:
             raise HTTPException(status_code=400, detail="session_key required")
-        action = body.get("action", "take_over")  # take_over | release
-        reason = body.get("reason", "operator")
+        action = str(body.get("action", "take_over")).strip()
+        if action not in {"take_over", "release"}:
+            raise HTTPException(status_code=400, detail="action must be take_over or release")
+        reason = str(body.get("reason", "operator")).strip() or "operator"
         if action == "release":
             return runtime.release_session(session_key)
         return runtime.take_over(session_key, reason)
@@ -329,14 +333,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/v1/outbox")
     async def enqueue_reply(body: dict[str, Any], x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
-        content = body.get("content", "")
+        content = str(body.get("content", "")).strip()
         if not content:
             raise HTTPException(status_code=400, detail="content required")
+        if len(content) > 5000:
+            raise HTTPException(status_code=400, detail="content too long")
+        session_key = str(body.get("session_key", "")).strip()
+        customer_id = str(body.get("customer_id", "")).strip()
+        if not session_key:
+            raise HTTPException(status_code=400, detail="session_key required")
+        if not customer_id or customer_id == "unknown":
+            raise HTTPException(status_code=400, detail="valid customer_id required")
         return runtime.enqueue_reply(
-            session_key=body.get("session_key", ""),
-            customer_id=body.get("customer_id", ""),
+            session_key=session_key,
+            customer_id=customer_id,
             content=content,
-            channel=body.get("channel", "xhs_qianfan"),
+            channel=str(body.get("channel", "xhs_qianfan")).strip() or "xhs_qianfan",
         )
 
     @app.get("/v1/outbox/pull")
@@ -348,8 +360,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def ack_outbox(oid: str, body: dict[str, Any] | None = None, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
         body = body or {}
-        status = body.get("status", "sent")
-        return runtime.ack_outbox(oid, status)
+        status = str(body.get("status", "sent")).strip()
+        if status not in {"sent", "failed"}:
+            raise HTTPException(status_code=400, detail="status must be sent or failed")
+        result = runtime.ack_outbox(oid, status)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error"))
+        return result
 
     return app
 

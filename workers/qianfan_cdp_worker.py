@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
+from collections import OrderedDict
 import json
 import os
 import time
@@ -43,6 +43,23 @@ SYSTEM_PREFIXES = ("客服机器人", "接入会话", "匹配到主要问法", "
 
 # 日志去重：避免同一错误无限刷屏
 _log_state: dict[str, str] = {}
+
+
+def _normalize_customer_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _message_key(customer_id: str, fingerprint: str) -> str:
+    """消息去重必须包含顾客，避免不同会话的相同文本互相覆盖。"""
+    return f"{_normalize_customer_id(customer_id) or 'unknown'}|{fingerprint}"
+
+
+def _remember(cache: OrderedDict[str, None], key: str, *, limit: int = 5000) -> None:
+    """记录近期项目并限制内存，适合长期运行的客服进程。"""
+    cache[key] = None
+    cache.move_to_end(key)
+    while len(cache) > limit:
+        cache.popitem(last=False)
 
 
 def _once(msg: str, key: str | None) -> str:
@@ -105,8 +122,9 @@ class QianfanCdpWorker:
         self.tenant_id = tenant_id
         self.channel = channel
         self.poll_interval = poll_interval
-        self.seen: set[str] = set()
-        self.sent_texts: set[str] = set()  # 记录自己发过的内容，用于过滤"复读"
+        self.seen: OrderedDict[str, None] = OrderedDict()
+        self.sent_texts: OrderedDict[str, None] = OrderedDict()
+        self.delivered_outbox: OrderedDict[str, None] = OrderedDict()
         self._running = False
 
     async def decide(self, text: str, customer_id: str) -> dict | None:
@@ -153,7 +171,8 @@ class QianfanCdpWorker:
                 if baseline:
                     obj = json.loads(baseline)
                     if obj and obj.get("hash"):
-                        self.seen.add(obj["hash"])
+                        contact = _normalize_customer_id(session.evaluate(_CURRENT_CONTACT_JS)) or "unknown"
+                        _remember(self.seen, _message_key(contact, obj["hash"]))
                         print("[cdp-worker] 已记录当前会话基线消息，仅响应后续新消息。")
                 print(f"[cdp-worker] 开始轮询新顾客消息（每 {self.poll_interval}s）...")
 
@@ -200,6 +219,36 @@ class QianfanCdpWorker:
 
     async def _poll_outbox(self, session: CdpSession) -> None:
         """轮询待发送队列，把人工审批通过/手写的回复回填到千帆。"""
+        items = await self._pull_outbox_items()
+        for item in items:
+            content = item.get("content", "")
+            if not content:
+                continue
+            oid = str(item.get("id") or "")
+            target_customer = _normalize_customer_id(item.get("customer_id"))
+            if not oid or not target_customer or target_customer == "unknown":
+                _log_once("[cdp-worker] outbox 缺少有效的消息 ID 或顾客标识，已保留待人工核对。", "outbox_invalid_target")
+                continue
+
+            # 已成功填入千帆但确认回执失败时，只重试 ACK，避免同一进程内重复发送。
+            if oid not in self.delivered_outbox:
+                current_customer = _normalize_customer_id(session.evaluate(_CURRENT_CONTACT_JS))
+                if current_customer != target_customer:
+                    _log_once(
+                        f"[cdp-worker] 待发回复属于「{target_customer}」，当前会话为「{current_customer or '未知'}」，暂不发送。",
+                        f"outbox_wait:{oid}",
+                    )
+                    continue
+                sent = await self._send(session, content, expected_customer_id=target_customer)
+                if not sent:
+                    _log_once(f"[cdp-worker] outbox {oid} 回填失败，将稍后重试。", f"outbox_send:{oid}")
+                    continue
+                _remember(self.delivered_outbox, oid)
+                print(f"[cdp-worker] 已回填人工回复到千帆: {content[:40]}...")
+
+            await self._ack_outbox_item(oid)
+
+    async def _pull_outbox_items(self) -> list[dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["X-Api-Key"] = self.api_key
@@ -208,27 +257,23 @@ class QianfanCdpWorker:
                 f"{self.decision_url.rstrip('/')}/v1/outbox/pull", headers=headers
             )
             resp.raise_for_status()
-            data = resp.json()
-        for item in data.get("outbox", []):
-            content = item.get("content", "")
-            if not content:
-                continue
-            await self._send(session, content)
-            print(f"[cdp-worker] 已回填人工回复到千帆: {content[:40]}...")
-            # 标记已发送
-            oid = item["id"]
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                await client.post(
-                    f"{self.decision_url.rstrip('/')}/v1/outbox/{oid}/ack",
-                    json={"status": "sent"},
-                    headers=headers,
-                )
+            return list(resp.json().get("outbox", []))
+
+    async def _ack_outbox_item(self, oid: str) -> None:
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["X-Api-Key"] = self.api_key
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            ack = await client.post(
+                f"{self.decision_url.rstrip('/')}/v1/outbox/{oid}/ack",
+                json={"status": "sent"},
+                headers=headers,
+            )
+            ack.raise_for_status()
 
     async def _poll_once(self, session: CdpSession) -> None:
         # 1. 读当前会话的顾客昵称
-        contact = session.evaluate(
-            "document.querySelector('.current-contact, .user-info') ? document.querySelector('.current-contact, .user-info').innerText.split('\\n')[0].trim() : ''"
-        )
+        contact = session.evaluate(_CURRENT_CONTACT_JS)
         # 2. 读消息区最后一条真正的顾客消息（方向判定版）
         last_customer = session.evaluate(_LAST_CUSTOMER_JS)
         if not last_customer:
@@ -236,17 +281,19 @@ class QianfanCdpWorker:
         text = last_customer.get("text", "").strip()
         if not text or not _is_customer_message(text):
             return
-        fingerprint = last_customer.get("hash", "")
-        if fingerprint in self.seen:
+        fingerprint = str(last_customer.get("hash", ""))
+        customer_id = _normalize_customer_id(contact) or "unknown"
+        message_key = _message_key(customer_id, fingerprint)
+        if message_key in self.seen:
             return
         stripped = text.strip()
         # 核心防复读：如果这条文本是我自己刚发出去过的，跳过（不是顾客消息）
-        if stripped in self.sent_texts:
+        if _message_key(customer_id, stripped) in self.sent_texts:
+            _remember(self.seen, message_key)
             return
-        self.seen.add(fingerprint)
         print(f"[cdp-worker v2] 检测到新顾客消息: {text[:40]}")
 
-        customer_id = contact or "unknown"
+        # 决策接口失败时不要提前标记为已处理；下一轮会重试，不会静默丢消息。
         decision = await self.decide(text, customer_id)
         if not decision:
             return
@@ -255,6 +302,7 @@ class QianfanCdpWorker:
             print(f"[cdp-worker v2] 会话已人工接管，不自动回复: {text[:30]}...")
             await self._notify_in_qianfan(session, f"🙋 需要人工接管：{text[:30]}")
             system_notify("critical")  # 置顶 + 任务栏持续闪烁 + 声音
+            _remember(self.seen, message_key)
             return
         reply = decision.get("reply", "")
         # 需人工审批（高风险写操作/敏感内容）：不自动发送，进入待审队列，并弹提醒
@@ -262,12 +310,18 @@ class QianfanCdpWorker:
             print(f"[cdp-worker v2] 回复需人工审批，已入待审队列（{decision.get('moderation_id', '?')}）: {reply[:40]}...")
             await self._notify_in_qianfan(session, f"⚠️ 需人工审批：{reply[:40]}")
             system_notify("warning")  # 置顶 + 闪烁 + 声音
+            _remember(self.seen, message_key)
             return
         if not reply:
             print("[cdp-worker v2] 无可直接发送的回复，跳过。")
+            _remember(self.seen, message_key)
             return
-        await self._send(session, reply)
-        print(f"[cdp-worker v2] 已发送回复: {reply[:40]}...")
+        sent = await self._send(session, reply, expected_customer_id=customer_id)
+        if sent:
+            _remember(self.seen, message_key)
+            print(f"[cdp-worker v2] 已发送回复: {reply[:40]}...")
+        else:
+            print("[cdp-worker v2] 回复未成功发送，将在下一轮重试。")
 
     async def _notify_in_qianfan(self, session: CdpSession, message: str) -> None:
         """在真实千帆窗口内注入醒目浮层提醒（不破坏千帆 DOM，可自动消失）。"""
@@ -304,33 +358,63 @@ class QianfanCdpWorker:
         except Exception as e:  # noqa: BLE001
             print(f"[cdp-worker] 千帆弹提醒失败（非致命）: {type(e).__name__}")
 
-    async def _send(self, session: CdpSession, reply: str) -> None:
+    async def _send(
+        self,
+        session: CdpSession,
+        reply: str,
+        *,
+        expected_customer_id: str | None = None,
+    ) -> bool:
         """把回复填入 textarea.reply-textarea 并触发发送。"""
         reply = reply.strip()
         if not reply:
             print("[cdp-worker] 回复为空，跳过发送。")
-            return
-        # 记录自己将发送的内容，用于后续过滤"复读"
-        self.sent_texts.add(reply)
+            return False
+        expected = _normalize_customer_id(expected_customer_id)
+        if expected:
+            active = _normalize_customer_id(session.evaluate(_CURRENT_CONTACT_JS))
+            if active != expected:
+                print(f"[cdp-worker] 会话已切换为「{active or '未知'}」，取消向「{expected}」发送。")
+                return False
         # 填入文本（textarea 用 value + input 事件触发框架响应）
         ok = session.evaluate(
             _FILL_JS.replace("__REPLY__", json.dumps(reply, ensure_ascii=False))
         )
         if not ok:
             print("[cdp-worker] 填入输入框失败，跳过发送。")
-            return
+            return False
+        if expected:
+            active = _normalize_customer_id(session.evaluate(_CURRENT_CONTACT_JS))
+            if active != expected:
+                session.evaluate(_CLEAR_INPUT_JS)
+                print(f"[cdp-worker] 填入后检测到会话切换，已清空输入框并取消发送。")
+                return False
         # 点击发送按钮（非 disabled）
         clicked = session.evaluate(_CLICK_SEND_JS)
         if not clicked:
             # 兜底：模拟回车
-            session.evaluate(
+            clicked = bool(session.evaluate(
                 "(() => { const ta = document.querySelector('textarea.reply-textarea'); "
                 "if(!ta) return false; ta.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); return true; })()"
-            )
-            print("[cdp-worker] 已用回车兜底发送。")
+            ))
+            if clicked:
+                print("[cdp-worker] 已用回车兜底发送。")
+        if not clicked:
+            print("[cdp-worker] 未找到可用的发送按钮或输入框。")
+            return False
+        _remember(self.sent_texts, _message_key(expected or "unknown", reply), limit=1000)
+        return True
 
     def stop(self) -> None:
         self._running = False
+
+
+_CURRENT_CONTACT_JS = r"""
+(() => {
+  const el = document.querySelector('.current-contact, .user-info');
+  return el ? (el.innerText || '').split('\n')[0].trim() : '';
+})()
+"""
 
 
 # 读取最后一条真正的顾客消息（用 flex 方向判定，可靠区分客服/顾客）
@@ -359,7 +443,11 @@ _LAST_CUSTOMER_JS = r"""
     const contentParts = parts.filter(s => !/^\d{1,2}:\d{1,2}$/.test(s) && s !== '已读');
     const text = contentParts.join(' ').trim();
     if (!text) continue;
-    let hash = 0; for (let c of text) { hash = (hash * 31 + c.charCodeAt(0)) >>> 0; }
+    // 优先采用千帆节点的稳定 ID；缺失时把完整原文和消息位置纳入指纹，
+    // 允许同一顾客在不同时间重复发送“你好”等相同文本。
+    const stableId = row.getAttribute('data-id') || row.id || (row.dataset && (row.dataset.messageId || row.dataset.id)) || '';
+    const fingerprintSource = stableId || `${raw}|${i}`;
+    let hash = 0; for (let c of fingerprintSource) { hash = (hash * 31 + c.charCodeAt(0)) >>> 0; }
     return { text, hash: 'm' + hash.toString(16) };
   }
   return null;
@@ -375,6 +463,18 @@ _FILL_JS = r"""
   // 用原生 setter 触发 React/Vue 响应
   const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
   setter.call(ta, __REPLY__);
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+})()
+"""
+
+
+_CLEAR_INPUT_JS = r"""
+(() => {
+  const ta = document.querySelector('textarea.reply-textarea');
+  if (!ta) return false;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+  setter.call(ta, '');
   ta.dispatchEvent(new Event('input', { bubbles: true }));
   return true;
 })()
