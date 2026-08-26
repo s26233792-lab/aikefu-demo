@@ -5,7 +5,8 @@ import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, "src")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR / "src"))
 
 from xhs_kefu.aftersale_policy import AftersalePolicyEngine, NEGOTIATED_REASON_PROMPT
 

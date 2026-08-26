@@ -2,20 +2,29 @@
 
 用法：
     python run.py web       # 启动决策 API + Web 演示界面 (默认，端口 18081)
+    python run.py qianfan   # 自动启动千帆桌面客户端并连接 Worker（Windows/macOS）
+    python run.py doctor    # 检查 Python、依赖、千帆客户端、CDP 与 API
     python run.py desktop   # 千帆桌面端(Electron) CDP 真实 Worker（需客户端带调试端口运行）
     python run.py login     # 千帆网页版扫码登录（旧方案，网页版用）
     python run.py worker    # 千帆网页版浏览器 Worker（旧方案，网页版用）
     python run.py smoke     # 离线冒烟测试（rules 模式，无需 LLM Key）
 
-千帆桌面端真实接入：
-1. 带调试端口启动千帆客户端：
-   "C:\\Users\\Terrt\\AppData\\Local\\Programs\\eva\\千帆客服工作台.exe" --remote-debugging-port=9222 --remote-allow-origins=*
-2. 另开终端先启动决策 API：python run.py web
-3. 启动桌面 Worker：python run.py desktop
+千帆桌面端真实接入（推荐）：
+1. 另开终端先启动决策 API：python run.py web
+2. 自动启动并连接官方客户端：python run.py qianfan
+
+macOS 可直接双击 install-macos.command 完成首次安装，再双击 start-macos.command。
 """
 from __future__ import annotations
 
 import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parent
+SRC_DIR = ROOT_DIR / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 
 def run_web() -> None:
@@ -24,12 +33,16 @@ def run_web() -> None:
 
 
 def run_login() -> None:
+    from xhs_kefu.config import load_dotenv
+    load_dotenv()
     from workers.qianfan_login import main as login_main
     login_main()
 
 
 def run_worker() -> None:
     import asyncio
+    from xhs_kefu.config import load_dotenv
+    load_dotenv()
     from workers.qianfan_browser import main as worker_main
     asyncio.run(worker_main())
 
@@ -37,12 +50,41 @@ def run_worker() -> None:
 def run_desktop() -> None:
     """启动千帆桌面端（Electron）CDP Worker。前提：千帆客户端已带调试端口运行。"""
     import asyncio
+    from xhs_kefu.config import load_dotenv
+    load_dotenv()
     from workers.qianfan_cdp_worker import main as desktop_main
     asyncio.run(desktop_main())
 
 
+def run_qianfan() -> None:
+    """跨平台启动千帆官方客户端，等待 CDP 就绪后运行 Worker。"""
+    from xhs_kefu.config import load_dotenv
+    load_dotenv()
+    from workers.qianfan_launcher import launch_qianfan
+
+    result = launch_qianfan()
+    if not result.get("ok"):
+        print(f"启动失败：{result.get('error', '未知错误')}")
+        if result.get("hint"):
+            print(f"处理建议：{result['hint']}")
+        if result.get("download_url"):
+            print(f"官方下载：{result['download_url']}")
+        raise SystemExit(1)
+    print(f"千帆 CDP 已就绪：{result.get('cdp_url')}")
+    run_desktop()
+
+
+def run_doctor() -> None:
+    from xhs_kefu.config import load_dotenv
+    load_dotenv()
+    from workers.qianfan_launcher import doctor, print_doctor
+
+    report = doctor()
+    print_doctor(report)
+    raise SystemExit(0 if report.get("ready") else 1)
+
+
 def run_smoke() -> None:
-    import sys
     sys.stdout.reconfigure(encoding="utf-8")
     import asyncio
     from xhs_kefu.config import Settings
@@ -92,6 +134,11 @@ def run_smoke() -> None:
 
 
 if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except (AttributeError, OSError):
+        pass
     mode = sys.argv[1] if len(sys.argv) > 1 else "web"
     if mode == "web":
         run_web()
@@ -101,7 +148,11 @@ if __name__ == "__main__":
         run_worker()
     elif mode == "desktop":
         run_desktop()
+    elif mode in {"qianfan", "mac"}:
+        run_qianfan()
+    elif mode == "doctor":
+        run_doctor()
     elif mode == "smoke":
         run_smoke()
     else:
-        print("未知模式，可选: web / login / worker / desktop / smoke")
+        print("未知模式，可选: web / qianfan / doctor / login / worker / desktop / smoke")

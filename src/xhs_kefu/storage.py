@@ -29,6 +29,7 @@ class SQLiteStore:
                 )
                 """
             )
+
             self.connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS decisions (
@@ -107,6 +108,10 @@ class SQLiteStore:
                 )
                 """
             )
+
+    def close(self) -> None:
+        """释放数据库连接，便于服务优雅退出和测试清理临时文件。"""
+        self.connection.close()
 
     def recent_turns(self, session_key: str, limit: int = 8) -> list[dict[str, str]]:
         rows = self.connection.execute(
@@ -313,8 +318,9 @@ class SQLiteStore:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def mark_outbox(self, id: str, status: str) -> None:
+    def mark_outbox(self, id: str, status: str) -> bool:
         with self.connection:
-            self.connection.execute(
+            cursor = self.connection.execute(
                 "UPDATE outbox SET status = ? WHERE id = ?", (status, id)
             )
+        return cursor.rowcount > 0

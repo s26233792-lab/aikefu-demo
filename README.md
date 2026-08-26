@@ -4,6 +4,8 @@
 
 > 架构忠实参考 [dxl-commerce-agent](https://github.com/whichmen/dxl-commerce-agent)：意图识别 → 工具查事实 → 风控 → 写操作审批 → 回复。支持真实 DeepSeek LLM 推理 + 规则降级。Web 演示界面在 http://127.0.0.1:18081 。
 
+支持 **Windows 与 macOS** 的小红书千帆客服工作台：桌面客户端采用 Electron CDP 接入，网页后台采用 Playwright 作为兼容兜底。macOS 可使用仓库根目录的一键安装、启动脚本。
+
 ## 演示场景（售前 / 订单 / 售后）
 
 | 阶段 | 演示问题 | 涉及能力 |
@@ -25,7 +27,7 @@
 3. **多 Agent MVP 版**（`xhs_kefu/mvp/`）：Router → FAQ/商品/售后 三个子 Agent + RAG + 工具。
 
 ```
-小红书千帆(网页版) / Web演示界面
+小红书千帆（Windows/macOS 桌面端或网页版）/ Web 演示界面
         │  统一 IncomingMessage
         ▼
 Decision API  POST /v1/decide （去重 + 会话锁 + 短时记忆）
@@ -95,10 +97,11 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 | 能力 | 说明 |
 |---|---|
 | **审批台** | Web 面板（http://127.0.0.1:18081）实时展示待审队列，点「✅ 通过发送 / ❌ 拒绝」 |
-| **手写回复** | 审批台内直接输入消息，经待发送队列由 Worker 回填到千帆 |
+| **手写回复** | 从待办中选择明确的目标顾客后输入消息，经待发送队列由 Worker 回填到千帆；目标不匹配时保持排队 |
 | **会话接管** | 「🚫 接管」停止自动回复转人工，「✅ 恢复」重新交还 Agent |
 | **浏览器通知** | 有新待办时弹桌面通知（需授权 Notification） |
-| **闭环发送** | 审批通过 → 待发送队列（outbox）→ Worker 轮询回填千帆 → 回执 |
+| **闭环发送** | 审批通过 → 待发送队列（outbox）→ 核对当前千帆顾客 → 回填 → 成功回执 |
+| **防重复/错发** | 审批只允许处理一次；接口或输入框失败会重试；会话切换时取消发送并保留待办 |
 
 ### 审批队列 API
 
@@ -133,18 +136,31 @@ curl -X POST http://127.0.0.1:18081/zhixia/decide \
 
 ### 1. 安装依赖
 
+Windows：
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 ```
 
-> 需要千帆真实浏览器 Worker 时再：`pip install playwright && playwright install chromium`
+macOS 推荐直接双击 `install-macos.command`，或在终端执行：
+
+```bash
+chmod +x install-macos.command start-macos.command
+./install-macos.command
+```
+
+该脚本会创建 `.venv`、安装桌面 CDP 与网页 Playwright 依赖，并在缺少时创建 `.env`。官方千帆客服工作台可从[小红书下载中心](https://walle.xiaohongshu.com/client-update/)安装 Mac 版本。
 
 ### 2. 配置
 
 ```bash
+# Windows
 copy .env.example .env
+
+# macOS / Linux
+cp .env.example .env
 # 编辑 .env，填入 DEEPSEEK_API_KEY；无 Key 可先设 XHS_LLM_MODE=rules 体验规则降级
 ```
 
@@ -153,9 +169,38 @@ copy .env.example .env
 ```bash
 python run.py web      # 启动 API + Web 演示（http://127.0.0.1:18081）
 python run.py smoke    # 离线冒烟测试（rules 模式，无需 Key）
+python run.py doctor   # 检查当前系统的千帆客户端、CDP、依赖和 API
 ```
 
 ### 4. 接入真实小红书千帆（真实售后/客服）
+
+#### macOS 桌面客户端（推荐）
+
+1. 从[千帆官方下载中心](https://walle.xiaohongshu.com/client-update/)安装 Mac 版，并至少登录一次；
+2. 双击 `install-macos.command` 完成首次安装；
+3. 双击 `start-macos.command`，脚本会启动决策 API、打开审批台、以 CDP 模式启动千帆并连接 Worker；
+4. 按 `Control+C` 会安全停止本次 API 与 Worker，不会强制退出千帆客户端。
+
+也可以手动运行：
+
+```bash
+source .venv/bin/activate
+python run.py doctor
+python run.py web       # 终端 1
+python run.py qianfan   # 终端 2，自动发现 /Applications/千帆客服工作台.app
+```
+
+若客户端安装在其他位置，在 `.env` 中设置：
+
+```bash
+XHS_QIANFAN_APP_PATH=/Applications/千帆客服工作台.app
+XHS_QIANFAN_CDP_PORT=9222
+XHS_QIANFAN_STORE_NAME=你的真实店铺名
+```
+
+人工介入时，Mac 会尝试激活千帆窗口并发送系统通知。首次触发时，请在“系统设置 → 隐私与安全性 → 自动化/通知”中允许终端或 Python。
+
+#### 网页后台兼容模式
 
 ```bash
 # 第一步：扫码登录（打开千帆浏览器窗口，用小红书 App 扫码，登录态持久化，仅需一次）
@@ -170,7 +215,18 @@ python run.py worker
 
 > - 千帆是 SPA，登录后进入 `ark.xiaohongshu.com/app-system/home` 即成功；
 > - Worker 为 **只读 + 自动回复**：顾客咨询自动决策回复；退款/改址/拦截等写操作**不在真实后台自动点击**，会上报到审批队列，人工确认后再处理；
+> - Worker 无法识别当前顾客或检测到会话切换时会暂停发送，不会把回复投递到另一个会话；
 > - DOM 选择器已按 2026-08-19 登录后真实页面校准，见 `workers/qianfan_browser.py` 顶部 `SELECTORS`；页面升级后需重新校准。
+
+#### macOS 常见问题
+
+| 现象 | 处理方式 |
+|---|---|
+| `doctor` 提示未找到客户端 | 安装官方 Mac 版，或设置 `XHS_QIANFAN_APP_PATH` |
+| 客户端已打开但 CDP 未就绪 | 完全退出千帆后重新运行 `python run.py qianfan`；脚本会用调试参数启动新实例 |
+| 系统通知或窗口激活无效 | 在 macOS 系统设置中允许终端/Python 的通知与自动化权限 |
+| 桌面客户端升级后 DOM 不匹配 | 暂时改用 `python run.py login` + `python run.py worker` 网页模式，并重新校准选择器 |
+| Apple Silicon 安装依赖失败 | 确认使用原生 arm64 Python 3.11+，删除 `.venv` 后重跑安装脚本 |
 
 打开 http://127.0.0.1:18081 ，在左侧切换「售前/售中/售后」场景并点击脚本按钮逐条体验；右侧实时展示 Agent 决策链路，底部可审批/执行高风险写操作。
 
@@ -179,6 +235,8 @@ python run.py worker
 ```
 xhs-kefu-demo/
 ├── run.py                      # 一键启动 (web/worker/smoke)
+├── install-macos.command       # macOS 首次安装
+├── start-macos.command         # macOS 启动 API + 千帆 + Worker
 ├── pyproject.toml / .env.example
 ├── config/policy.toml          # 风控策略（补偿金额上限/证据/审批）
 ├── src/xhs_kefu/
@@ -192,14 +250,18 @@ xhs-kefu-demo/
 │   ├── storage.py              # SQLite
 │   ├── api.py                  # FastAPI 决策/工具/审批/历史接口
 │   └── web/                    # 千帆模拟器 + Agent 链路可视化面板
-└── workers/qianfan_browser.py  # Playwright 千帆网页版真实收发 Worker
+└── workers/
+    ├── qianfan_launcher.py     # Windows/macOS 客户端发现、启动、诊断
+    ├── qianfan_cdp_worker.py   # 千帆桌面端 CDP Worker
+    ├── qianfan_browser.py      # Playwright 千帆网页版 Worker
+    └── notifier.py             # Windows/macOS 人工介入提醒
 ```
 
 ## 说明与免责
 
 - 本 Demo 的订单/物流/商品均为**演示夹具数据**，不接真实 ERP；写操作在"沙箱"中记录动作状态，不真正调用快递/千帆写接口。
-- 千帆网页版是 SPA，DOM 结构与选择器会随版本变化，`workers/qianfan_browser.py` 顶部的 `SELECTORS` 需按当前页面校准；登录态由本地持久化 profile 保存。
-- 接入真实顾客前，请按自己的数据规范配置鉴权、备份、保留期与人工接管流程。
+- 千帆桌面端与网页版均可能随官方升级改变 DOM；桌面端使用 `workers/qianfan_cdp_worker.py` 的选择器，网页版使用 `workers/qianfan_browser.py` 的选择器。登录态和 Cookie 只保存在本机用户数据目录，不提交到 Git。
+- 接入真实顾客前，请设置非空 `XHS_API_KEY`，并按自己的数据规范配置备份、保留期与人工接管流程。
 
 ## 许可证
 

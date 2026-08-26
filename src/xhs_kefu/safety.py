@@ -21,6 +21,8 @@ _CONTACT_RE = re.compile(r"(微信|vx|VX|微信号|加微|私聊|QQ号|qq号)\s*
 _ID_RE = re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)")
 # 银行卡
 _BANK_RE = re.compile(r"(?<!\d)\d{16,19}(?!\d)")
+# 短信验证码 / 支付密码（仅识别带明确语义标签的 4~8 位数字）
+_OTP_RE = re.compile(r"(验证码|短信码|动态码|支付密码)\s*[:：为是]?\s*\d{4,8}", re.IGNORECASE)
 # 提示词注入特征
 _INJECTION_MARKERS = (
     "忽略之前", "忽略以上", "忽略所有", "系统提示词", "system prompt", "developer message",
@@ -49,6 +51,7 @@ def redact_pii(text: str) -> str:
     text = _CONTACT_RE.sub("[联系方式已脱敏]", text)
     text = _ID_RE.sub("[证件号已脱敏]", text)
     text = _BANK_RE.sub("[银行卡已脱敏]", text)
+    text = _OTP_RE.sub("[验证码/支付密码已脱敏]", text)
     return text
 
 
@@ -66,7 +69,7 @@ def check_outbound(reply: str) -> SafetyResult:
     if _INTERNAL_LEAK_RE.search(reply):
         return SafetyResult(False, "INTERNAL_LEAK", "回复疑似泄漏内部结构")
     # 回复中不应输出完整手机号/身份证/银行卡
-    if _PHONE_RE.search(reply) or _ID_RE.search(reply) or _BANK_RE.search(reply):
+    if _PHONE_RE.search(reply) or _ID_RE.search(reply) or _BANK_RE.search(reply) or _OTP_RE.search(reply):
         return SafetyResult(False, "PII_LEAK", "回复包含敏感信息，需人工确认")
     # 回复不应索取个人联系方式
     if _CONTACT_RE.search(reply):

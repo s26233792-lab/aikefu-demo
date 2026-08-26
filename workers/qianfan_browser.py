@@ -20,16 +20,20 @@ import asyncio
 import hashlib
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
+
+try:
+    from .qianfan_launcher import chromium_args, default_profile_dir
+except ImportError:  # 兼容直接执行脚本
+    from qianfan_launcher import chromium_args, default_profile_dir
 
 # 千帆网页版工作台地址（商家专业号客服后台）
 QIANFAN_HOME_URL = "https://ark.xiaohongshu.com/app-system/home"
 
 # 登录态 profile（由 workers/qianfan_login.py 扫码后持久化）
-_DEFAULT_PROFILE = str(Path(__file__).resolve().parent.parent / "data" / "qianfan-profile")
+_DEFAULT_PROFILE = str(default_profile_dir())
 
 # DOM 选择器 —— 已按 2026-08-19 登录后真实页面结构校准
 # 关键发现：千帆客服聊天容器用 im-chat-* / chat-* 前缀，输入框为 textarea.input-base
@@ -46,6 +50,7 @@ SELECTORS = {
     "message_center": ".message-center",
     "message_list": ".message-list",
     "message_item": ".message-item",
+    "current_contact": ".current-contact, .user-info, [class*='current-contact'], [class*='user-info']",
 }
 
 
@@ -105,7 +110,7 @@ class QianfanBrowserWorker:
             context = await p.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 headless=self.headless,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+                args=chromium_args(),
                 viewport={"width": 1280, "height": 900},
             )
             page = context.pages[0] if context.pages else await context.new_page()
@@ -139,12 +144,15 @@ class QianfanBrowserWorker:
         for m in messages:
             if m["message_id"] in self.seen_message_ids:
                 continue
-            self.seen_message_ids.add(m["message_id"])
+            customer_id = str(m.get("customer_id") or "").strip()
+            if not customer_id or customer_id == "unknown":
+                print("[worker] 无法识别当前顾客，已暂停自动回复以避免串线。")
+                continue
             payload = {
                 "tenant_id": self.tenant_id,
                 "store_id": self.store_id,
                 "channel": self.channel,
-                "customer_id": m.get("customer_id", "unknown"),
+                "customer_id": customer_id,
                 "message_id": m["message_id"],
                 "text": m.get("text", ""),
                 "attachments": m.get("attachments", []),
@@ -152,16 +160,31 @@ class QianfanBrowserWorker:
             if not payload["text"]:
                 continue
             print(f"[worker] 收到顾客消息: {payload['text'][:40]}...")
+            # 接口或发送失败时不提前记为已处理，让后续轮询安全重试。
             decision = await self.decision.decide(payload)
             reply = decision.get("reply", "")
-            if reply and decision.get("status") not in ("pending_approval",):
+            status = decision.get("status")
+            if reply and status in {"resolved", "deduplicated"}:
                 # 若决策返回待审批（涉及写操作），不在真实后台自动点击，仅记录
-                await self._send_reply(page, reply)
-                print(f"[worker] 已回复顾客 {payload['customer_id']}: {reply[:40]}...")
-            elif decision.get("status") == "pending_approval":
+                sent = await self._send_reply(page, reply, expected_customer_id=customer_id)
+                if not sent:
+                    print(f"[worker] 回复未发送，将重试顾客 {customer_id} 的消息。")
+                    continue
+                print(f"[worker] 已回复顾客 {customer_id}: {reply[:40]}...")
+                self.seen_message_ids.add(m["message_id"])
+            elif status in {"pending_approval", "taken_over"}:
                 print(f"[worker] 该消息涉及写操作需人工审批，不自动执行：{decision.get('reply','')[:40]}...")
+                self.seen_message_ids.add(m["message_id"])
             else:
                 print("[worker] 决策未产生可直接发送的回复，跳过。")
+                self.seen_message_ids.add(m["message_id"])
+
+    async def _current_customer(self, page) -> str:
+        element = await page.query_selector(SELECTORS["current_contact"])
+        if not element:
+            return ""
+        text = (await element.inner_text()).strip()
+        return text.splitlines()[0].strip() if text else ""
 
     async def _extract_incoming(self, page) -> list[dict]:
         """从千帆页面提取新顾客消息（选择器需按页面校准）。
@@ -171,6 +194,9 @@ class QianfanBrowserWorker:
         """
         result: list[dict] = []
         try:
+            customer_id = await self._current_customer(page)
+            if not customer_id:
+                return []
             items = await page.query_selector_all(SELECTORS["message_in"])
             for idx, item in enumerate(items):
                 text_el = await item.query_selector(SELECTORS["message_text"])
@@ -179,10 +205,11 @@ class QianfanBrowserWorker:
                 if not text:
                     continue
                 # 稳定去重：用文本 + 下标 + 时间窗做消息指纹
-                fingerprint = hashlib.sha1(f"{text}|{idx}".encode()).hexdigest()[:16]
+                fingerprint = hashlib.sha1(f"{customer_id}|{text}|{idx}".encode()).hexdigest()[:16]
                 result.append(
                     {
                         "message_id": f"qianfan-{fingerprint}",
+                        "customer_id": customer_id,
                         "text": text,
                         "attachments": [],
                     }
@@ -192,20 +219,28 @@ class QianfanBrowserWorker:
             pass
         return result
 
-    async def _send_reply(self, page, reply: str) -> None:
+    async def _send_reply(self, page, reply: str, *, expected_customer_id: str) -> bool:
         """回填回复到输入框并触发发送。"""
+        if await self._current_customer(page) != expected_customer_id:
+            print(f"[worker] 当前会话已切换，取消向 {expected_customer_id} 发送。")
+            return False
         input_box = await page.query_selector(SELECTORS["input_box"])
         if not input_box:
             print("[worker] 未找到输入框，跳过发送（可能页面结构变化）。")
-            return
+            return False
         await input_box.click()
         await input_box.fill(reply)
         await page.wait_for_timeout(300)
+        if await self._current_customer(page) != expected_customer_id:
+            await input_box.fill("")
+            print(f"[worker] 填入后会话已切换，已清空输入框并取消发送。")
+            return False
         send_btn = await page.query_selector(SELECTORS["send_btn"])
         if send_btn:
             await send_btn.click()
         else:
             await page.keyboard.press("Enter")
+        return True
 
     def stop(self) -> None:
         self._running = False

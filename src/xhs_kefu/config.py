@@ -11,7 +11,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 
-def _load_dotenv() -> None:
+def load_dotenv() -> None:
     """从项目根目录 .env 加载环境变量（若存在且未显式设置）。
 
     不覆盖已存在的环境变量，以便部署环境可覆盖本地 .env。
@@ -46,7 +46,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
-        _load_dotenv()
+        load_dotenv()
         data_dir = Path(os.environ.get("XHS_DATA_DIR", BASE_DIR / "src" / "xhs_kefu" / "data"))
         return cls(
             base_dir=BASE_DIR,

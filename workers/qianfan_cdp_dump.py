@@ -8,7 +8,10 @@ import json
 import sys
 from pathlib import Path
 
-from cdp_client import CdpSession, find_cstools_page
+try:
+    from .cdp_client import CdpSession, find_cstools_page
+except ImportError:  # 兼容直接执行脚本
+    from cdp_client import CdpSession, find_cstools_page
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DUMP_DIR = BASE_DIR / "data" / "dump"

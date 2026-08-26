@@ -1,6 +1,9 @@
 """测试物流轨迹生成器（各订单状态的多节点轨迹）。"""
 import sys
-sys.path.insert(0, "src")
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT_DIR / "src"))
 sys.stdout.reconfigure(encoding="utf-8")
 
 from xhs_kefu.zhixia_tools import ZhixiaTools

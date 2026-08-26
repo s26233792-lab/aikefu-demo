@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -64,12 +65,13 @@ class ZhixiaTools:
     # ---------- 订单（核验订单号 + 手机号后四位）----------
 
     def order_lookup(self, order_id: str, phone_last4: str | None = None) -> dict | None:
-        """查询订单。必须提供订单号；若有 phone_last4 则同时核验。"""
+        """查询订单；订单号和手机号后四位缺一不可。"""
+        verified_digits = str(phone_last4 or "").strip()
+        if not re.fullmatch(r"\d{4}", verified_digits):
+            return {"error": "verification_required", "reason": "请提供收货手机号后四位进行核验"}
         order = self._orders_by_id.get(order_id.strip().upper())
-        if order is None:
-            return None
-        if phone_last4 and str(order.get("verify_phone_last4", "")) != str(phone_last4).strip():
-            return {"error": "verify_failed", "reason": "手机号后四位不匹配"}
+        if order is None or str(order.get("verify_phone_last4", "")) != verified_digits:
+            return {"error": "verify_failed", "reason": "订单号或手机号后四位核验不匹配"}
         return deepcopy(order)
 
     # ---------- 会员 ----------
@@ -91,10 +93,12 @@ class ZhixiaTools:
 
     # ---------- 写操作（沙箱，需人工审批）----------
 
-    def modify_address(self, order_id: str, new_address: str) -> dict:
-        order = self._orders_by_id.get(order_id.strip().upper())
+    def modify_address(self, order_id: str, new_address: str, phone_last4: str | None = None) -> dict:
+        order = self.order_lookup(order_id, phone_last4)
         if order is None:
             return {"ok": False, "error": "order_not_found"}
+        if order.get("error"):
+            return {"ok": False, **order}
         # 已发货订单不能直接修改地址
         if "已发" in order.get("status", "") or "签收" in order.get("status", ""):
             return {"ok": False, "error": "shipped_cannot_modify", "reason": "已发货订单不能直接修改地址，可联系承运方或申请拦截"}
@@ -103,10 +107,12 @@ class ZhixiaTools:
             "note": "未发货订单可申请修改地址，已为您提交申请，不承诺一定成功", "sandbox": True,
         }
 
-    def cancel_order(self, order_id: str) -> dict:
-        order = self._orders_by_id.get(order_id.strip().upper())
+    def cancel_order(self, order_id: str, phone_last4: str | None = None) -> dict:
+        order = self.order_lookup(order_id, phone_last4)
         if order is None:
             return {"ok": False, "error": "order_not_found"}
+        if order.get("error"):
+            return {"ok": False, **order}
         if "已发" in order.get("status", "") or "签收" in order.get("status", ""):
             return {"ok": False, "error": "shipped_cannot_cancel"}
         return {"ok": True, "order_id": order_id, "note": "已为您提交取消订单申请，仓库锁单后可能失败", "sandbox": True}

@@ -16,11 +16,15 @@
 from __future__ import annotations
 
 import sys
-import time
 from pathlib import Path
 
+try:
+    from .qianfan_launcher import chromium_args, default_profile_dir
+except ImportError:  # 兼容直接执行脚本
+    from qianfan_launcher import chromium_args, default_profile_dir
+
 BASE_DIR = Path(__file__).resolve().parent.parent
-PROFILE_DIR = BASE_DIR / "data" / "qianfan-profile"
+PROFILE_DIR = default_profile_dir()
 DUMP_DIR = BASE_DIR / "data" / "dump"
 QIANFAN_URL = "https://ark.xiaohongshu.com/"
 
@@ -39,10 +43,10 @@ def main() -> None:
         browser = p.chromium.launch_persistent_context(
             user_data_dir=str(PROFILE_DIR),
             headless=False,
-            args=["--no-sandbox", "--disable-blink-features=AutomationControlled"],
+            args=chromium_args(),
             viewport={"width": 1280, "height": 900},
         )
-        page = browser.new_page()
+        page = browser.pages[0] if browser.pages else browser.new_page()
         print(f"[login] 打开千帆 {QIANFAN_URL} ...")
         page.goto(QIANFAN_URL, wait_until="domcontentloaded", timeout=60000)
         page.wait_for_timeout(5000)

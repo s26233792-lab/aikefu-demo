@@ -7,6 +7,8 @@ data/qianfan-profile/
 data/dump/
 data/*.db
 data/*.db-*
+data/*.log
+data/*.pid
 
 # ===== Python =====
 __pycache__/
@@ -17,6 +19,8 @@ venv/
 *.egg-info/
 dist/
 build/
+.DS_Store
+
 
 # ===== 调试脚本（历史遗留，不随项目发布）=====
 scripts/debug_*.py
