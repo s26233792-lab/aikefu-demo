@@ -3,18 +3,23 @@
 直接通过 websocket 连 CDP 的 page target，用 Runtime.evaluate 抓取/操作 DOM，
 绕开 Playwright connect_over_cdp 枚举所有 target 时挂起的问题。
 
-关键 CDP 端点：http://127.0.0.1:9222/json/list 列出所有 target，
+关键 CDP 端点：由 XHS_CDP_URL / XHS_CDP_PORT 配置（默认 19222），
+其 /json/list 列出所有 target，
 其中客服工作台页面 URL 为 https://walle.xiaohongshu.com/cstools/seller/dashboard。
 """
 from __future__ import annotations
 
 import json
+import os
 import urllib.request
 from typing import Any
 
 import websocket  # type: ignore
 
-CDP_HTTP = "http://127.0.0.1:9222"
+CDP_HTTP = os.environ.get(
+    "XHS_CDP_URL",
+    f"http://127.0.0.1:{os.environ.get('XHS_CDP_PORT', '19222')}",
+).rstrip("/")
 
 
 def list_targets() -> list[dict]:

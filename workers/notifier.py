@@ -12,9 +12,13 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes as wt
+import subprocess
 import sys
 import time
 from threading import Thread
+
+_IS_WINDOWS = sys.platform == "win32"
+_IS_MACOS = sys.platform == "darwin"
 
 # 千帆客户端进程名（MainWindowTitle 是 'eva'）
 _QIANFAN_TITLE_PREFIX = "eva"
@@ -38,6 +42,8 @@ class FLASHWINFO(ctypes.Structure):
 
 def _find_qianfan_hwnd() -> int | None:
     """找到千帆主窗口句柄（按标题 'eva' 匹配）。"""
+    if not _IS_WINDOWS:
+        return None
     user32 = ctypes.windll.user32
 
     def enum_callback(hwnd, lParam):
@@ -77,6 +83,16 @@ def _find_qianfan_hwnd() -> int | None:
 
 def bring_to_front() -> bool:
     """把千帆窗口置顶并还原（若最小化则还原）。"""
+    if _IS_MACOS:
+        result = subprocess.run(
+            ["open", "-a", "千帆客服工作台"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return result.returncode == 0
+    if not _IS_WINDOWS:
+        return False
     hwnd = _find_qianfan_hwnd()
     if not hwnd:
         return False
@@ -93,6 +109,8 @@ def bring_to_front() -> bool:
 
 def flash_taskbar(continuous: bool = True) -> None:
     """让千帆任务栏图标闪烁（continuous=True 时持续闪烁直到获得焦点）。"""
+    if not _IS_WINDOWS:
+        return
     hwnd = _find_qianfan_hwnd()
     if not hwnd:
         return
@@ -110,8 +128,16 @@ def play_sound() -> None:
     """播放系统提示音（后台线程，不阻塞）。"""
     def _play():
         try:
-            import winsound
-            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+            if _IS_MACOS:
+                subprocess.run(
+                    ["osascript", "-e", "beep 1"],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            elif _IS_WINDOWS:
+                import winsound
+                winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
         except Exception:  # noqa: BLE001
             pass
     Thread(target=_play, daemon=True).start()
@@ -125,13 +151,25 @@ def notify(level: str = "warning") -> dict:
     返回执行结果字典。
     """
     brought = bring_to_front()
+    if _IS_MACOS:
+        message = "有顾客会话需要人工接管" if level == "critical" else "有客服回复需要人工审批"
+        subprocess.run(
+            [
+                "osascript", "-e",
+                f'display notification "{message}" with title "栀夏客服 Agent" sound name "Glass"',
+            ],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"brought_to_front": brought, "level": level, "platform": "macos"}
     if level == "critical":
         flash_taskbar(continuous=True)
         play_sound()
     else:
         flash_taskbar(continuous=False)
         play_sound()
-    return {"brought_to_front": brought, "level": level}
+    return {"brought_to_front": brought, "level": level, "platform": sys.platform}
 
 
 if __name__ == "__main__":

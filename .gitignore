@@ -7,6 +7,9 @@ data/qianfan-profile/
 data/dump/
 data/*.db
 data/*.db-*
+data/*.log
+data/*.pid
+data/*.dpapi
 
 # ===== Python =====
 __pycache__/

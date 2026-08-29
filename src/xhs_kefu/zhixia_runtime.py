@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from typing import Any
 
 from .decision import Disposition, analyze_tone, decide
 from .safety import check_inbound, check_outbound
 from .zhixia_agent import ZhixiaLLMAgent
+from .zhixia_rules import ZhixiaRuleAgent
 from .zhixia_tools import ZhixiaTools
 
 # 转人工触发词（agent.md 第 11 节）
@@ -40,6 +42,50 @@ _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
 _REFERENCE_WORDS = ("那", "这个", "这", "它", "上面", "刚才", "这款", "那款", "那件", "它家", "就它", "这个有", "那有")
 
 
+def naturalize_customer_reply(reply: str) -> str:
+    """Remove internal/demo wording before a reply reaches a customer."""
+    reply = re.sub(
+        r"如果要体验查单[^。！？]*?(?:7319|手机号后四位)[^。！？]*[。！？]?",
+        "",
+        reply,
+    )
+    replacements = {
+        "演示数据中暂未查询到": "暂未查询到",
+        "演示环境": "当前服务",
+        "演示订单": "订单",
+        "测试用订单": "订单",
+        "测试订单": "订单",
+        "模拟订单号": "订单号",
+        "模拟订单": "订单",
+        "模拟数据": "系统数据",
+    }
+    for source, target in replacements.items():
+        reply = reply.replace(source, target)
+    fulfillment_replacements = {
+        "会安排在次日发出": "通常在次日安排出库",
+        "会在次日发出": "通常在次日安排出库",
+        "当天是来不及出库的": "当天通常无法完成出库",
+        "一般次日就会安排发货": "通常会在次日安排出库",
+        "明天会优先为您安排出库": "预计明天优先安排出库，以实际进度为准",
+        "稍等片刻就能看到更新": "可稍后留意物流更新",
+        "仓库有进展我会第一时间同步给您": "请留意后续人工反馈",
+        "我会持续帮您关注": "请留意后续进展",
+        "我会第一时间同步给您": "请留意后续消息",
+        "如有更新我会第一时间帮您跟进": "请留意后续人工反馈",
+        "有任何进展我会帮您跟进": "后续请留意客服消息",
+        "通常需要 1~3 个工作日到账": "审核通过后通常 1～5 个工作日到账，以原支付渠道为准",
+        "通常需要 1～3 个工作日到账": "审核通过后通常 1～5 个工作日到账，以原支付渠道为准",
+        "保证当天发出": "优先安排当天出库，以实际进度为准",
+        "保证明天发出": "预计明天安排出库，以实际进度为准",
+        "保证准时送达": "会尽力按预计时效配送，以实际物流为准",
+    }
+    for source, target in fulfillment_replacements.items():
+        reply = reply.replace(source, target)
+    # 最后的兜底：即使模型偏离提示，也不把内部测试语境暴露给顾客。
+    reply = reply.replace("演示", "").replace("模拟", "").replace("**", "").replace("`", "")
+    return reply.strip()
+
+
 def detect_topic(text: str) -> str:
     """识别消息主题分组。含指代词时返回 'reference'（跟随上文）。"""
     if any(w in text for w in _REFERENCE_WORDS):
@@ -54,6 +100,7 @@ class ZhixiaRuntime:
     def __init__(self, *, llm_agent: ZhixiaLLMAgent | None = None, tools: ZhixiaTools | None = None) -> None:
         self.llm_agent = llm_agent
         self.tools = tools or ZhixiaTools()
+        self.rule_agent = ZhixiaRuleAgent(self.tools)
 
     @staticmethod
     def _build_llm_history(text: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -94,12 +141,20 @@ class ZhixiaRuntime:
                 )
             if name == "member_lookup":
                 return self.tools.member_lookup(phone_last4=args.get("phone_last4", ""))
+            if name == "shop_policy_lookup":
+                return self.tools.policy_lookup(topic=args.get("topic", ""))
             if name == "modify_address":
                 r = self.tools.modify_address(
                     order_id=args.get("order_id", ""),
+                    phone_last4=args.get("phone_last4", ""),
                     new_address=args.get("new_address", ""),
                 )
                 return r
+            if name == "cancel_order":
+                return self.tools.cancel_order(
+                    order_id=args.get("order_id", ""),
+                    phone_last4=args.get("phone_last4", ""),
+                )
             return {"error": f"unknown tool: {name}"}
 
         return execute
@@ -132,12 +187,15 @@ class ZhixiaRuntime:
             return {
                 "intent": "handoff_human", "tone": tone.value,
                 "disposition": Disposition.HANDOFF_HUMAN.value,
-                "needs_human": True, "reply": "",
+                "needs_human": True,
+                "reply": "已提交人工专员复核，预计 2 小时内反馈；23:00 后提交的申请将在次日 10:00 前优先处理。",
                 "tool_calls": [], "moderation_id": f"mod_{uuid.uuid4().hex}",
                 "handoff_reason": handoff_reason,
             }
 
         # 4. LLM 回复（历史先做话题裁剪，避免旧话题污染）
+        intent = "auto"
+        fallback_needs_human = False
         if self.llm_agent is not None:
             try:
                 llm_history = self._build_llm_history(text, history)
@@ -154,20 +212,76 @@ class ZhixiaRuntime:
                 reply = "抱歉，我这边暂时无法处理，已为您转交人工客服，请稍候。"
                 tool_calls = []
         else:
-            reply = "（未配置 LLM，无法回复）"
-            tool_calls = []
+            result = self.rule_agent.run(text)
+            intent = result["intent"]
+            reply = result["reply"]
+            tool_calls = result["tool_calls"]
+            fallback_needs_human = result.get("needs_human", False)
 
-        # 5. 出站护栏
+        # 5. 客服口径规范化 + 出站护栏
+        reply = naturalize_customer_reply(reply)
+        if not reply:
+            reply = "您好，请问想了解商品、尺码，还是订单售后呢？"
+        logistics_exception = any(
+            bool(
+                isinstance(call.get("result"), dict)
+                and isinstance(call["result"].get("logistics_freshness"), dict)
+                and call["result"]["logistics_freshness"].get("over_72h_no_update")
+            )
+            for call in tool_calls
+        )
+        fulfillment_exception = any(
+            bool(
+                isinstance(call.get("result"), dict)
+                and isinstance(call["result"].get("fulfillment_freshness"), dict)
+                and call["result"]["fulfillment_freshness"].get("over_48h_unshipped")
+            )
+            for call in tool_calls
+        )
+        high_risk_write = any(
+            call.get("name") in {"modify_address", "cancel_order"}
+            for call in tool_calls
+        )
+        if logistics_exception or fulfillment_exception:
+            # API 随后会创建人工待办，因此异常回执要直接告知已受理，
+            # 不能让模型反问“是否需要处理”，导致顾客误以为尚未登记。
+            reply = re.sub(
+                r"(?:考虑到[^。！？]*[，,])?(?:我建议|建议)[^。！？]*(?:登记|催件|提交人工|人工复核)[^。！？]*[。！？]?",
+                "",
+                reply,
+            )
+            reply = re.sub(r"(?:这种情况)?我会为您提交人工专员复核[^。！？]*[。！？]?", "", reply)
+            reply = re.sub(r"您看(?:是否|需要)[^。！？]*[？?]", "", reply).strip()
+            if "已提交人工专员复核" not in reply:
+                reply = reply.rstrip("。 \n") + "。\n\n已提交人工专员复核，预计 2 小时内反馈；23:00 后提交的申请将在次日 10:00 前优先处理。"
         out = check_outbound(reply)
-        needs_human = not out.ok
+        if high_risk_write:
+            intent = "order_change_request"
+        elif logistics_exception:
+            intent = "logistics_exception"
+        elif fulfillment_exception:
+            intent = "shipping_exception"
+        needs_human = (
+            fallback_needs_human
+            or logistics_exception
+            or fulfillment_exception
+            or high_risk_write
+            or not out.ok
+        )
         disp = Disposition.REQUIRE_APPROVAL.value if needs_human else Disposition.AUTO_REPLY.value
 
         return {
-            "intent": "auto", "tone": tone.value,
+            "intent": intent, "tone": tone.value,
             "disposition": disp,
             "needs_human": needs_human,
             "reply": reply,
             "tool_calls": tool_calls,
             "moderation_id": f"mod_{uuid.uuid4().hex}" if needs_human else None,
+            # 发货/物流超时说明属于可安全自动发送的事实型回执；发送后仍进入人工队列。
+            "send_before_handoff": (
+                (logistics_exception or fulfillment_exception)
+                and not high_risk_write
+                and out.ok
+            ),
             "safety": out.to_dict(),
         }

@@ -180,6 +180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "status": runtime.health()["status"],
             "llm_mode": settings.llm_mode,
             "llm_model": settings.llm_model,
+            "llm_ready": settings.llm_mode == "llm" and bool(settings.llm_api_key),
         }
 
     @app.post("/v1/decide")

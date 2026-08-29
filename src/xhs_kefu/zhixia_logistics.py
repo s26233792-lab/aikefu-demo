@@ -98,4 +98,7 @@ def generate_trace(order: dict, now: datetime | None = None) -> dict:
         "trace": trace,
         "latest_event": order.get("latest_event", trace[-1]["desc"] if trace else ""),
         "eta": eta or order.get("ship_eta", ""),
+        "queried_at": order.get("queried_at"),
+        "logistics_freshness": order.get("logistics_freshness"),
+        "fulfillment_freshness": order.get("fulfillment_freshness"),
     }

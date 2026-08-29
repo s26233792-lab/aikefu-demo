@@ -1,6 +1,6 @@
 """千帆桌面端（Electron）—— CDP 自动收发 Worker。
 
-通过 --remote-debugging-port=9222 连接已登录的千帆客服工作台桌面端，
+通过可配置的远程调试端口连接已登录的千帆客服工作台桌面端，
 轮询当前会话的新顾客消息 → 调用决策 API → 回填回复到输入框并发送。
 
 真实的千帆客服工作台 DOM 结构（已按 2026-08-19 实测校准）：
@@ -19,19 +19,24 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import time
 from typing import Any
 
 import httpx
 
-from cdp_client import CdpSession, find_cstools_page
-from notifier import notify as system_notify
+try:
+    from .cdp_client import CdpSession, find_cstools_page
+    from .notifier import notify as system_notify
+except ImportError:  # 允许直接运行本文件
+    from cdp_client import CdpSession, find_cstools_page
+    from notifier import notify as system_notify
 
 # 决策 API 地址
 DECISION_URL = "http://127.0.0.1:18081"
 
 # 店铺名（客服消息开头会带店铺名 + 时间 + 已读；顾客消息不带）
-STORE_NAME = "Icetea冻柠"
+STORE_NAME = os.environ.get("XHS_STORE_NAME", "").strip()
 
 # 系统消息特征（不是顾客消息，需过滤）
 SYSTEM_PREFIXES = ("客服机器人", "接入会话", "匹配到主要问法", "会话长时间无新消息", "系统")
@@ -71,7 +76,8 @@ def _is_customer_message(text: str) -> bool:
     if "已读" in t:
         return False
     # 排除系统前缀
-    for prefix in SYSTEM_PREFIXES + (STORE_NAME,):
+    prefixes = SYSTEM_PREFIXES + ((STORE_NAME,) if STORE_NAME else ())
+    for prefix in prefixes:
         if t.startswith(prefix):
             return False
     # 排除纯状态
@@ -247,6 +253,11 @@ class QianfanCdpWorker:
         reply = decision.get("reply", "")
         # 需人工审批（高风险写操作/敏感内容）：不自动发送，进入待审队列，并弹提醒
         if decision.get("needs_approval") or decision.get("status") == "pending_approval":
+            # 发货/物流超时有明确事实时，先把状态和已建人工工单的回执发给顾客，
+            # 后续处理仍由人工队列接管；其他待审内容保持不自动发送。
+            if decision.get("send_before_handoff") and reply:
+                await self._send(session, reply)
+                print(f"[cdp-worker v2] 已发送异常受理回执: {reply[:40]}...")
             print(f"[cdp-worker v2] 回复需人工审批，已入待审队列（{decision.get('moderation_id', '?')}）: {reply[:40]}...")
             await self._notify_in_qianfan(session, f"⚠️ 需人工审批：{reply[:40]}")
             system_notify("warning")  # 置顶 + 闪烁 + 声音

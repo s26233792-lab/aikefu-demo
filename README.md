@@ -1,6 +1,6 @@
 # 栀夏 ZHIXIA 女装客服 Agent · Demo
 
-一个**女装电商 AI 客服演示**，按 `agent.md` 规格实现：品牌「栀夏 ZHIXIA」客服「小栀」，面向 22~38 岁女性（通勤/简约/轻法式），支持售前导购、订单物流查询、会员查询、售后处理，含完整模拟商品库/订单库/会员库/活动规则/售后规则。
+一个**女装电商 AI 客服演示**，按 `agent.md` 规格实现：品牌「栀夏 ZHIXIA」客服「小栀」，面向 22~38 岁女性（通勤/简约/轻法式），支持售前导购、订单物流查询、发货履约、会员查询、售后处理，并包含商品、订单、会员和店铺政策数据。
 
 > 架构忠实参考 [dxl-commerce-agent](https://github.com/whichmen/dxl-commerce-agent)：意图识别 → 工具查事实 → 风控 → 写操作审批 → 回复。支持真实 DeepSeek LLM 推理 + 规则降级。Web 演示界面在 http://127.0.0.1:18081 。
 
@@ -20,7 +20,7 @@
 
 本项目包含**三套并存的架构**：
 
-1. **栀夏 Agent**（`zhixia_*.py`，主演示）：LLM 完整 Agent Loop + 工具（商品/订单/会员）+ 语气分析 + 转人工，端点 `/zhixia/decide`；
+1. **栀夏 Agent**（`zhixia_*.py`，主演示）：LLM 完整 Agent Loop + 工具（商品/订单/物流/会员/店铺政策）+ 语气分析 + 转人工，端点 `/zhixia/decide`；
 2. **单 Agent 版**（`xhs_kefu/` 顶层）：LLM 完整 Agent Loop + 工具 + 风控 + 审批，已接真实千帆；
 3. **多 Agent MVP 版**（`xhs_kefu/mvp/`）：Router → FAQ/商品/售后 三个子 Agent + RAG + 工具。
 
@@ -112,18 +112,63 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 | `GET /v1/outbox/pull` | Worker 拉取待发送内容 |
 | `POST /v1/outbox/{id}/ack` | 确认已发送 |
 
-## 快速开始
+## 部署方式（macOS / Windows）
 
-### 0. 先体验栀夏女装客服（无需千帆）
+先安装 Python 3.11 或更高版本，并安装、登录「千帆客服工作台」。项目统一使用：
 
-项目主演示 Agent 是「栀夏 ZHIXIA」女装客服（规则见桌面 `agent.md`）：
+- 管理后台：http://127.0.0.1:18081
+- 千帆专用调试端口：`19222`
+- LLM：DeepSeek（密钥不会写进仓库）
 
-```bash
-python run.py web      # 启动 API
-# 浏览器打开 http://127.0.0.1:18081 ，左侧切「售前导购/订单物流/售后」点按钮体验
+| 项目 | macOS | Windows |
+|---|---|---|
+| 首次安装 | `deploy/macos/install.command` | `deploy\windows\install.bat` |
+| 日常启动 | `deploy/macos/start.command` | `deploy\windows\start.bat` |
+| 停止服务 | `deploy/macos/stop.command` | `deploy\windows\stop.bat` |
+| 更换密钥 | `deploy/macos/change-key.command` | `deploy\windows\change-key.bat` |
+| 密钥保存 | macOS 钥匙串 | Windows DPAPI（当前用户加密） |
+| 详细说明 | [macOS 部署文档](docs/deployment-macos.md) | [Windows 部署文档](docs/deployment-windows.md) |
+
+### macOS
+
+首次安装双击：
+
+```text
+deploy/macos/install.command
 ```
 
-或直接调接口：
+以后双击 `deploy/macos/start.command` 即可。启动器会读取钥匙串中的 DeepSeek 密钥，检查千帆配对状态，并启动 API 和自动回复 Worker。停止时双击 `deploy/macos/stop.command`。
+
+若 macOS 首次阻止脚本运行，可在 Finder 中右键脚本，选择“打开”。
+
+### Windows 10 / 11
+
+首次安装双击：
+
+```text
+deploy\windows\install.bat
+```
+
+以后双击 `deploy\windows\start.bat` 即可。启动器会解密当前 Windows 用户保存的 DeepSeek 密钥，自动寻找千帆安装位置，并启动 API 和自动回复 Worker。停止时双击 `deploy\windows\stop.bat`。
+
+仓库根目录保留的 `start.bat`、`stop.bat` 和 `启动器.vbs` 是兼容入口，实际会调用 `deploy\windows` 下的新脚本。
+
+### 手动启动 / 仅体验 Web 演示
+
+不接千帆时，也可以手动安装并体验「栀夏 ZHIXIA」女装客服：
+
+```bash
+python -m venv .venv
+source .venv/bin/activate      # macOS
+# .venv\Scripts\activate      # Windows
+pip install -r requirements.txt
+pip install -e .
+python run.py web
+```
+
+浏览器打开 http://127.0.0.1:18081 。演示查单可使用订单号 `ZX202608200147` 和手机号后四位 `7319`。
+
+也可直接调接口：
 
 ```bash
 curl -X POST http://127.0.0.1:18081/zhixia/decide \
@@ -131,55 +176,27 @@ curl -X POST http://127.0.0.1:18081/zhixia/decide \
   -d '{"text":"我158cm52kg梨形身材，想买面试穿的，预算800","session_key":"demo"}'
 ```
 
-### 1. 安装依赖
+手动接入千帆桌面端时，先让千帆以 `19222` 调试端口启动，再分别运行：
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-```
-
-> 需要千帆真实浏览器 Worker 时再：`pip install playwright && playwright install chromium`
-
-### 2. 配置
-
-```bash
-copy .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY；无 Key 可先设 XHS_LLM_MODE=rules 体验规则降级
-```
-
-### 3. 启动
-
-```bash
-python run.py web      # 启动 API + Web 演示（http://127.0.0.1:18081）
-python run.py smoke    # 离线冒烟测试（rules 模式，无需 Key）
-```
-
-### 4. 接入真实小红书千帆（真实售后/客服）
-
-```bash
-# 第一步：扫码登录（打开千帆浏览器窗口，用小红书 App 扫码，登录态持久化，仅需一次）
-python run.py login
-
-# 第二步：另开终端启动决策 API（若未启动）
 python run.py web
-
-# 第三步：启动 Worker（复用登录态，自动轮询新买家消息 → 决策 → 回填回复）
-python run.py worker
+XHS_CDP_PORT=19222 python run.py desktop   # macOS
+# Windows PowerShell: $env:XHS_CDP_PORT=19222; python run.py desktop
 ```
 
-> - 千帆是 SPA，登录后进入 `ark.xiaohongshu.com/app-system/home` 即成功；
-> - Worker 为 **只读 + 自动回复**：顾客咨询自动决策回复；退款/改址/拦截等写操作**不在真实后台自动点击**，会上报到审批队列，人工确认后再处理；
-> - DOM 选择器已按 2026-08-19 登录后真实页面校准，见 `workers/qianfan_browser.py` 顶部 `SELECTORS`；页面升级后需重新校准。
-
-打开 http://127.0.0.1:18081 ，在左侧切换「售前/售中/售后」场景并点击脚本按钮逐条体验；右侧实时展示 Agent 决策链路，底部可审批/执行高风险写操作。
+Worker 会自动回复普通咨询；退款、赔偿、改址、拦截等高风险操作会进入管理后台的待审队列，不会直接操作真实后台。
 
 ## 目录结构
 
 ```
 xhs-kefu-demo/
 ├── run.py                      # 一键启动 (web/worker/smoke)
+├── agent.md                    # 栀夏客服身份、语气与业务规则
 ├── pyproject.toml / .env.example
+├── deploy/
+│   ├── macos/                  # macOS 安装/启动/停止/换 Key
+│   └── windows/                # Windows 安装/启动/停止/换 Key
+├── docs/                       # 分系统部署说明
 ├── config/policy.toml          # 风控策略（补偿金额上限/证据/审批）
 ├── src/xhs_kefu/
 │   ├── domain.py               # IncomingMessage/Intent/DecisionPlan/风控枚举

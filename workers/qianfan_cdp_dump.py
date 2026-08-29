@@ -8,13 +8,16 @@ import json
 import sys
 from pathlib import Path
 
-from cdp_client import CdpSession, find_cstools_page
+try:
+    from .cdp_client import CdpSession, find_cstools_page
+except ImportError:  # 允许直接运行本文件
+    from cdp_client import CdpSession, find_cstools_page
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DUMP_DIR = BASE_DIR / "data" / "dump"
 
 DUMP_JS = r"""
-() => {
+(() => {
   const out = {url: location.href, title: document.title, nav: [], candidates: []};
   document.querySelectorAll("a, [role='menuitem'], [class*='menu'], [class*='nav'], [class*='tab'], [class*='item']").forEach(el => {
     const t = (el.innerText || '').trim().slice(0, 20);
@@ -40,11 +43,12 @@ DUMP_JS = r"""
     });
   });
   return JSON.stringify(out, null, 2);
-}
+})()
 """
 
 
 def main() -> None:
+    DUMP_DIR.mkdir(parents=True, exist_ok=True)
     target = find_cstools_page()
     if target is None:
         print("[cdp] 未找到已登录的客服工作台 page target。请确认千帆客户端已登录并打开客服工作台。")

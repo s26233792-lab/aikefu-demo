@@ -8,8 +8,11 @@
     python run.py smoke     # 离线冒烟测试（rules 模式，无需 LLM Key）
 
 千帆桌面端真实接入：
-1. 带调试端口启动千帆客户端：
-   "C:\\Users\\Terrt\\AppData\\Local\\Programs\\eva\\千帆客服工作台.exe" --remote-debugging-port=9222 --remote-allow-origins=*
+1. 带调试端口启动千帆客户端。
+   macOS：
+   open -na "/Applications/千帆客服工作台.app" --args --remote-debugging-port=19222 '--remote-allow-origins=*'
+   Windows：
+   "%LOCALAPPDATA%\\Programs\\eva\\千帆客服工作台.exe" --remote-debugging-port=19222 --remote-allow-origins=*
 2. 另开终端先启动决策 API：python run.py web
 3. 启动桌面 Worker：python run.py desktop
 """

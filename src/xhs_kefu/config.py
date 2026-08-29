@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DEEPSEEK_KEYCHAIN_SERVICE = "aikefu-demo.deepseek"
 
 
 def _load_dotenv() -> None:
@@ -28,6 +31,30 @@ def _load_dotenv() -> None:
         value = value.strip().strip('"').strip("'")
         if key and key not in os.environ:
             os.environ[key] = value
+
+
+def _read_deepseek_keychain() -> str | None:
+    """Read the DeepSeek key from macOS Keychain without exposing it in files."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(
+            [
+                "/usr/bin/security",
+                "find-generic-password",
+                "-s",
+                DEEPSEEK_KEYCHAIN_SERVICE,
+                "-w",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    key = result.stdout.strip()
+    return key or None
 
 
 @dataclass
@@ -55,8 +82,13 @@ class Settings:
             database_path=os.environ.get("XHS_DB_PATH", str(BASE_DIR / "data" / "xhs_kefu.db")),
             llm_mode=os.environ.get("XHS_LLM_MODE", "rules").lower(),
             llm_base_url=os.environ.get("XHS_LLM_BASE_URL", "https://api.deepseek.com"),
-            llm_model=os.environ.get("XHS_LLM_MODEL", "deepseek-chat"),
-            llm_api_key=os.environ.get("DEEPSEEK_API_KEY") or None,
+            llm_model=os.environ.get("XHS_LLM_MODEL", "deepseek-v4-flash"),
+            llm_api_key=(
+                os.environ.get("XHS_LLM_API_KEY")
+                or os.environ.get("DEEPSEEK_API_KEY")
+                or _read_deepseek_keychain()
+                or None
+            ),
             store_id=os.environ.get("XHS_STORE_ID", "STORE-001"),
             tenant_id=os.environ.get("XHS_TENANT_ID", "demo"),
             api_key=os.environ.get("XHS_API_KEY") or None,
