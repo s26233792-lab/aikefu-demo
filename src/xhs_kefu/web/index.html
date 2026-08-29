@@ -38,6 +38,16 @@
   header .logo { font-weight: 700; color: var(--xhs-red); font-size: 18px; display:flex; align-items:center; gap:8px; }
   header .logo .badge { font-size:12px; background:#eaf1ff; color:var(--xhs-red); padding:2px 8px; border-radius:10px; font-weight:500; }
   header .status { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .workspace-nav {
+    display:flex; align-items:center; gap:4px; padding:4px;
+    border:1px solid var(--border); border-radius:14px; background:#f7f8fa;
+  }
+  .workspace-tab {
+    border:0; background:transparent; color:#646a73; cursor:pointer;
+    padding:7px 14px; border-radius:10px; font-size:13px; font-weight:650;
+    transition:background .18s ease,color .18s ease,box-shadow .18s ease;
+  }
+  .workspace-tab.active { background:#fff; color:var(--text); box-shadow:0 1px 6px rgba(0,0,0,.08); }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--green); }
   .dot.warn { background: var(--orange); }
   main {
@@ -109,14 +119,171 @@
   .action-item { border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin-bottom:6px; font-size:13px; }
   .action-item .row { display:flex; gap:8px; align-items:center; }
   .action-item .btn { font-size:12px; padding:4px 12px; }
+
+  /* 用户不良反馈：运营信号室 */
+  .hidden { display:none !important; }
+  .feedback-workspace {
+    flex:1; min-height:0; overflow-y:auto; padding:26px;
+    font-family:"Avenir Next", "PingFang SC", sans-serif;
+    background:
+      radial-gradient(circle at 84% 8%, rgba(226,74,42,.13), transparent 27%),
+      linear-gradient(135deg, rgba(23,23,19,.035) 1px, transparent 1px),
+      #f3efe5;
+    background-size:auto, 18px 18px, auto;
+  }
+  .feedback-shell { max-width:1440px; margin:0 auto; }
+  .feedback-hero {
+    position:relative; overflow:hidden; min-height:178px; padding:28px 32px;
+    border:1px solid #22221e; border-radius:22px; color:#f9f4e8; background:#191915;
+    display:flex; align-items:flex-end; justify-content:space-between; gap:28px;
+    box-shadow:0 18px 44px rgba(43,37,25,.16);
+  }
+  .feedback-hero::after {
+    content:""; position:absolute; right:-70px; top:-110px; width:300px; height:300px;
+    border:54px solid #e34d2f; border-radius:50%; opacity:.94;
+  }
+  .feedback-hero::before {
+    content:"VOICE"; position:absolute; right:150px; top:14px;
+    color:rgba(255,255,255,.055); font-size:88px; font-weight:900; letter-spacing:-5px;
+  }
+  .feedback-hero-copy { position:relative; z-index:1; max-width:720px; }
+  .feedback-kicker { color:#f7ab35; font-size:11px; font-weight:800; letter-spacing:.2em; margin-bottom:12px; }
+  .feedback-hero h1 {
+    font-family:"Songti SC", "STSong", serif; font-size:38px; line-height:1.08;
+    font-weight:800; letter-spacing:-.04em; margin-bottom:10px;
+  }
+  .feedback-hero p { color:#bbb7ab; font-size:14px; line-height:1.7; }
+  .feedback-refresh {
+    position:relative; z-index:2; border:1px solid rgba(255,255,255,.22); color:#fff;
+    background:rgba(255,255,255,.08); padding:10px 15px; border-radius:12px; cursor:pointer;
+    backdrop-filter:blur(8px); font-weight:700;
+  }
+  .feedback-refresh:hover { background:#e34d2f; border-color:#e34d2f; }
+  .feedback-kpis { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin:16px 0; }
+  .feedback-kpi {
+    min-height:128px; padding:18px 20px; border:1px solid rgba(32,31,27,.18); border-radius:17px;
+    background:rgba(255,253,247,.87); box-shadow:0 8px 20px rgba(50,42,27,.06);
+    animation:signalRise .42s both;
+  }
+  .feedback-kpi:nth-child(2){animation-delay:.06s}.feedback-kpi:nth-child(3){animation-delay:.12s}.feedback-kpi:nth-child(4){animation-delay:.18s}
+  .kpi-top { display:flex; justify-content:space-between; align-items:center; color:#777269; font-size:12px; font-weight:700; }
+  .kpi-mark { width:10px; height:10px; border-radius:50%; background:#d5cdbc; box-shadow:0 0 0 5px rgba(213,205,188,.25); }
+  .kpi-mark.red { background:#e34d2f; box-shadow:0 0 0 5px rgba(227,77,47,.13); }
+  .kpi-mark.amber { background:#e5a129; box-shadow:0 0 0 5px rgba(229,161,41,.15); }
+  .kpi-mark.green { background:#39866a; box-shadow:0 0 0 5px rgba(57,134,106,.13); }
+  .kpi-value { font-size:34px; font-weight:850; line-height:1; margin:22px 0 7px; letter-spacing:-.04em; }
+  .kpi-note { color:#8e887d; font-size:12px; }
+  .feedback-insights { display:grid; grid-template-columns:1.35fr .85fr; gap:14px; }
+  .signal-card {
+    min-height:270px; padding:20px; border:1px solid rgba(32,31,27,.18); border-radius:18px;
+    background:rgba(255,253,247,.91); box-shadow:0 8px 20px rgba(50,42,27,.05);
+  }
+  .signal-card-head { display:flex; justify-content:space-between; gap:14px; align-items:flex-start; margin-bottom:20px; }
+  .signal-card h2 { font-family:"Songti SC", "STSong", serif; font-size:20px; }
+  .signal-card-sub { color:#8e887d; font-size:12px; margin-top:5px; }
+  .trend-chart { height:176px; display:flex; align-items:flex-end; gap:7px; padding-top:10px; border-bottom:1px solid #d7d0c2; }
+  .trend-col { flex:1; min-width:8px; height:100%; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; gap:6px; }
+  .trend-count { font-size:10px; color:#746f65; min-height:12px; }
+  .trend-bar { width:100%; max-width:30px; min-height:3px; border-radius:5px 5px 0 0; background:#23231f; transition:height .35s ease; }
+  .trend-col.hot .trend-bar { background:#e34d2f; }
+  .trend-label { font-size:9px; color:#8d877b; height:14px; white-space:nowrap; }
+  .category-bars { display:flex; flex-direction:column; gap:14px; }
+  .category-line { display:grid; grid-template-columns:76px 1fr 28px; align-items:center; gap:10px; font-size:12px; }
+  .category-name { color:#4f4c45; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .category-track { height:9px; overflow:hidden; border-radius:99px; background:#e5dfd2; }
+  .category-fill { height:100%; border-radius:99px; background:#e34d2f; transform-origin:left; animation:barGrow .55s both; }
+  .category-count { text-align:right; font-weight:800; }
+  .platform-mix { margin-top:20px; display:flex; gap:8px; flex-wrap:wrap; }
+  .platform-chip { border:1px solid #d8d0c0; border-radius:999px; padding:7px 10px; color:#68635a; font-size:11px; background:#faf6ed; }
+  .feedback-board { margin-top:14px; border:1px solid rgba(32,31,27,.2); border-radius:19px; overflow:hidden; background:#fffcf5; }
+  .feedback-controls { display:flex; align-items:center; gap:10px; padding:15px 18px; border-bottom:1px solid #dfd8ca; background:#eee8dc; }
+  .feedback-controls h2 { font-family:"Songti SC", "STSong", serif; font-size:20px; margin-right:auto; }
+  .feedback-select { appearance:none; border:1px solid #ccc3b3; border-radius:10px; background:#fffaf1; color:#413f39; padding:8px 30px 8px 11px; font-size:12px; cursor:pointer; }
+  .feedback-total-label { font-size:12px; color:#777168; }
+  .feedback-list { min-height:180px; }
+  .feedback-row {
+    display:grid; grid-template-columns:116px 116px minmax(260px,1fr) 150px 128px;
+    gap:14px; align-items:center; padding:16px 18px; border-bottom:1px solid #ebe4d8;
+    transition:background .16s ease;
+  }
+  .feedback-row:last-child { border-bottom:0; }
+  .feedback-row:hover { background:#faf4e9; }
+  .feedback-row.severity-critical { box-shadow:inset 4px 0 #cf2f2f; }
+  .feedback-row.severity-high { box-shadow:inset 4px 0 #e56d32; }
+  .feedback-source { display:flex; flex-direction:column; gap:6px; }
+  .feedback-platform { font-size:11px; font-weight:800; color:#3f3c36; }
+  .feedback-time { color:#969083; font-size:10px; }
+  .feedback-severity { width:max-content; padding:4px 8px; border-radius:999px; font-size:10px; font-weight:850; letter-spacing:.05em; }
+  .feedback-severity.critical { background:#ffe0db; color:#a82222; }
+  .feedback-severity.high { background:#ffead5; color:#a64e18; }
+  .feedback-severity.medium { background:#efe8d8; color:#716343; }
+  .feedback-category { font-size:12px; font-weight:750; color:#605b51; }
+  .feedback-content { font-family:"Songti SC", "STSong", serif; font-size:15px; line-height:1.55; color:#25241f; }
+  .feedback-customer { margin-top:5px; color:#9a9488; font-family:ui-monospace,monospace; font-size:10px; }
+  .feedback-status { border:1px solid #cfc6b6; border-radius:9px; background:#fff; padding:8px; font-size:12px; }
+  .feedback-empty { padding:48px 20px; text-align:center; color:#8d877b; }
+  .feedback-empty strong { display:block; color:#34322d; font-family:"Songti SC",serif; font-size:20px; margin-bottom:8px; }
+  .feedback-seed { display:block; margin:16px auto 0; border:1px solid #272621; border-radius:10px; padding:8px 12px; background:#272621; color:#fff; font-size:11px; font-weight:750; cursor:pointer; }
+  .feedback-seed:hover { background:#e34d2f; border-color:#e34d2f; }
+  @keyframes signalRise { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:none} }
+  @keyframes barGrow { from{transform:scaleX(0)} to{transform:scaleX(1)} }
+  @media (max-width:1000px) {
+    .feedback-kpis { grid-template-columns:repeat(2,1fr); }
+    .feedback-insights { grid-template-columns:1fr; }
+    .feedback-row { grid-template-columns:100px 100px 1fr; }
+    .feedback-row .feedback-status, .feedback-row .feedback-category:last-of-type { grid-column:auto; }
+  }
+  @media (max-width:620px) {
+    header { height:auto; min-height:54px; padding:8px 10px; gap:7px; flex-wrap:wrap; }
+    header .logo { font-size:13px; }
+    header .logo .badge { display:none; }
+    header .status { max-width:126px; font-size:9px; line-height:1.2; }
+    .workspace-nav { order:3; width:100%; }
+    .workspace-tab { flex:1; padding:7px 8px; }
+    .feedback-workspace { width:100%; overflow-x:hidden; padding:12px; }
+    .feedback-shell { width:100%; min-width:0; }
+    .feedback-hero { min-height:218px; padding:24px 20px; display:block; }
+    .feedback-hero::after { right:-108px; top:-92px; width:250px; height:250px; border-width:45px; }
+    .feedback-hero::before { right:-8px; top:22px; font-size:62px; }
+    .feedback-hero h1 { max-width:160px; font-size:31px; }
+    .feedback-hero p { max-width:210px; font-size:12px; }
+    .feedback-refresh { margin-top:16px; padding:8px 11px; font-size:11px; }
+    .feedback-kpis { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; margin:10px 0; }
+    .feedback-kpi { min-height:108px; padding:14px; border-radius:14px; }
+    .kpi-top { font-size:10px; }
+    .kpi-value { margin:16px 0 6px; font-size:27px; }
+    .kpi-note { font-size:9px; }
+    .feedback-insights { gap:10px; }
+    .signal-card { min-height:230px; padding:15px; border-radius:15px; }
+    .signal-card h2, .feedback-controls h2 { font-size:18px; }
+    .trend-chart { gap:3px; height:150px; }
+    .trend-count { font-size:8px; }
+    .trend-label { font-size:7px; transform:rotate(-45deg); transform-origin:center; }
+    .category-line { grid-template-columns:66px 1fr 22px; gap:7px; }
+    .feedback-controls { align-items:stretch; flex-wrap:wrap; padding:13px; gap:7px; }
+    .feedback-controls h2 { width:100%; }
+    .feedback-total-label { margin-left:auto; align-self:center; }
+    .feedback-select { flex:1 1 46%; min-width:0; padding-right:8px; font-size:10px; }
+    .feedback-row { grid-template-columns:1fr auto; gap:10px; padding:15px 14px; }
+    .feedback-source { grid-column:1; grid-row:1; }
+    .feedback-severity { grid-column:2; grid-row:1; }
+    .feedback-row > div:nth-child(3) { grid-column:1 / -1; grid-row:2; }
+    .feedback-row > .feedback-category { grid-column:1; grid-row:3; }
+    .feedback-row > .feedback-status { grid-column:2; grid-row:3; max-width:98px; }
+    .feedback-content { font-size:14px; }
+  }
 </style>
 </head>
 <body>
 <header>
   <div class="logo">🌿 栀夏 ZHIXIA 女装客服 <span class="badge">千帆 + 飞鸽</span></div>
+  <nav class="workspace-nav" aria-label="工作区切换">
+    <button class="workspace-tab active" data-workspace="service">客服演示</button>
+    <button class="workspace-tab" data-workspace="feedback">不良反馈</button>
+  </nav>
   <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">加载中…</span></div>
 </header>
-<main>
+<main id="serviceWorkspace">
   <!-- 左侧：聊天窗 -->
   <div class="pane left">
     <div class="pane-title">
@@ -125,6 +292,7 @@
         <div class="scene-tab active" data-scene="pre">售前 · 推荐下单</div>
         <div class="scene-tab" data-scene="mid">售中 · 物流改址</div>
         <div class="scene-tab" data-scene="after">售后 · 补偿</div>
+        <div class="scene-tab" data-scene="negative">不满 · 投诉</div>
       </div>
     </div>
     <div class="chat" id="chat"></div>
@@ -156,6 +324,77 @@
   </div>
 </main>
 
+<section class="feedback-workspace hidden" id="feedbackWorkspace">
+  <div class="feedback-shell">
+    <div class="feedback-hero">
+      <div class="feedback-hero-copy">
+        <div class="feedback-kicker">VOICE / SIGNAL ROOM</div>
+        <h1>用户不良反馈</h1>
+        <p>自动汇总千帆与抖店飞鸽里的明确不满，按问题类型、严重度和处理状态形成可追踪的运营闭环。</p>
+      </div>
+      <button class="feedback-refresh" id="feedbackRefresh">↻ 刷新数据</button>
+    </div>
+
+    <div class="feedback-kpis">
+      <article class="feedback-kpi">
+        <div class="kpi-top"><span>近 30 天反馈</span><span class="kpi-mark"></span></div>
+        <div class="kpi-value" id="feedbackTotal">0</div>
+        <div class="kpi-note" id="feedbackToday">今日新增 0 条</div>
+      </article>
+      <article class="feedback-kpi">
+        <div class="kpi-top"><span>待处理</span><span class="kpi-mark amber"></span></div>
+        <div class="kpi-value" id="feedbackUnresolved">0</div>
+        <div class="kpi-note">含待跟进与处理中</div>
+      </article>
+      <article class="feedback-kpi">
+        <div class="kpi-top"><span>高危信号</span><span class="kpi-mark red"></span></div>
+        <div class="kpi-value" id="feedbackCritical">0</div>
+        <div class="kpi-note">平台介入 / 安全 / 监管</div>
+      </article>
+      <article class="feedback-kpi">
+        <div class="kpi-top"><span>解决率</span><span class="kpi-mark green"></span></div>
+        <div class="kpi-value" id="feedbackResolution">0%</div>
+        <div class="kpi-note" id="feedbackResolved">已解决 0 条</div>
+      </article>
+    </div>
+
+    <div class="feedback-insights">
+      <article class="signal-card">
+        <div class="signal-card-head">
+          <div><h2>14 日反馈走势</h2><div class="signal-card-sub">当天新增负面反馈数</div></div>
+        </div>
+        <div class="trend-chart" id="feedbackTrend"></div>
+      </article>
+      <article class="signal-card">
+        <div class="signal-card-head">
+          <div><h2>问题构成</h2><div class="signal-card-sub">快速定位最需要改进的环节</div></div>
+        </div>
+        <div class="category-bars" id="feedbackCategories"></div>
+        <div class="platform-mix" id="feedbackChannels"></div>
+      </article>
+    </div>
+
+    <div class="feedback-board">
+      <div class="feedback-controls">
+        <h2>反馈明细</h2>
+        <span class="feedback-total-label" id="feedbackVisibleCount">0 条</span>
+        <select class="feedback-select" id="feedbackChannelFilter" aria-label="渠道筛选">
+          <option value="">全部渠道</option><option value="xhs_qianfan_desktop">千帆</option><option value="douyin_feige">抖店飞鸽</option><option value="manual">人工录入</option>
+        </select>
+        <select class="feedback-select" id="feedbackStatusFilter" aria-label="状态筛选">
+          <option value="">全部状态</option><option value="open">待跟进</option><option value="processing">处理中</option><option value="resolved">已解决</option><option value="dismissed">已忽略</option>
+        </select>
+        <select class="feedback-select" id="feedbackSeverityFilter" aria-label="严重度筛选">
+          <option value="">全部等级</option><option value="critical">紧急</option><option value="high">高</option><option value="medium">一般</option>
+        </select>
+      </div>
+      <div class="feedback-list" id="feedbackList">
+        <div class="feedback-empty"><strong>正在读取反馈</strong>请稍候…</div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <script>
 const SCENES = {
   pre: {
@@ -186,6 +425,16 @@ const SCENES = {
       "我想查一下会员积分。",
     ],
   },
+  negative: {
+    customerId: "feedback-user",
+    label: "不满与投诉",
+    script: [
+      "收到的衬衫有明显色差，做工也很差，我很失望。",
+      "订单 ZX202608190066 一直没发货，也没人处理。",
+      "退款到现在还没到账，我要投诉。",
+      "尺码严重偏小，页面说明根本不准。",
+    ],
+  },
 };
 
 let currentScene = "pre";
@@ -198,6 +447,8 @@ const sendBtn = document.getElementById("send");
 const actionsEl = document.getElementById("actions");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
+const serviceWorkspace = document.getElementById("serviceWorkspace");
+const feedbackWorkspace = document.getElementById("feedbackWorkspace");
 
 async function healthCheck() {
   try {
@@ -359,6 +610,7 @@ async function sendMessage(text, customerId) {
     }
     addMsg("agent", resp.reply || "(无回复)");
     renderTrace(resp);
+    if (resp.feedback_id) refreshFeedback();
   } catch (e) {
     thinking.remove();
     addMsg("agent", "后端调用失败：" + e.message);
@@ -516,7 +768,239 @@ async function refreshModeration() {
   } catch (e) {}
 }
 
+function switchWorkspace(workspace) {
+  const showFeedback = workspace === "feedback";
+  serviceWorkspace.classList.toggle("hidden", showFeedback);
+  feedbackWorkspace.classList.toggle("hidden", !showFeedback);
+  document.querySelectorAll(".workspace-tab").forEach((button) => {
+    button.classList.toggle("active", button.dataset.workspace === workspace);
+  });
+  if (showFeedback) refreshFeedback();
+}
+
+function feedbackPlatform(channel) {
+  if (channel === "douyin_feige") return "抖店飞鸽";
+  if (channel === "xhs_qianfan_desktop" || channel === "xhs_qianfan") return "千帆";
+  if (channel === "manual") return "人工录入";
+  return channel || "未知渠道";
+}
+
+function feedbackStatusLabel(status) {
+  return { open: "待跟进", processing: "处理中", resolved: "已解决", dismissed: "已忽略" }[status] || status;
+}
+
+function feedbackSeverityLabel(severity) {
+  return { critical: "紧急", high: "高", medium: "一般" }[severity] || severity;
+}
+
+function shortCustomer(customerId) {
+  const value = customerId || "未知用户";
+  if (value.length <= 14) return value;
+  return value.slice(0, 6) + "…" + value.slice(-4);
+}
+
+function renderFeedbackStats(stats) {
+  document.getElementById("feedbackTotal").textContent = stats.total || 0;
+  document.getElementById("feedbackToday").textContent = `今日新增 ${stats.today || 0} 条`;
+  document.getElementById("feedbackUnresolved").textContent = stats.unresolved || 0;
+  document.getElementById("feedbackCritical").textContent = stats.critical || 0;
+  document.getElementById("feedbackResolution").textContent = `${Number(stats.resolution_rate || 0).toFixed(1)}%`;
+  document.getElementById("feedbackResolved").textContent = `已解决 ${stats.resolved || 0} 条`;
+
+  const trendEl = document.getElementById("feedbackTrend");
+  trendEl.replaceChildren();
+  const trend = (stats.trend || []).slice(-14);
+  const maxCount = Math.max(1, ...trend.map((item) => Number(item.count || 0)));
+  trend.forEach((item, index) => {
+    const col = document.createElement("div");
+    col.className = "trend-col" + (Number(item.count || 0) === maxCount && maxCount > 0 ? " hot" : "");
+    const count = document.createElement("span");
+    count.className = "trend-count";
+    count.textContent = item.count || "";
+    const bar = document.createElement("div");
+    bar.className = "trend-bar";
+    bar.style.height = `${Math.max(3, Math.round(Number(item.count || 0) / maxCount * 126))}px`;
+    const label = document.createElement("span");
+    label.className = "trend-label";
+    label.textContent = index % 2 === 0 || index === trend.length - 1 ? item.day.slice(5) : "";
+    col.append(count, bar, label);
+    trendEl.appendChild(col);
+  });
+
+  const categoriesEl = document.getElementById("feedbackCategories");
+  categoriesEl.replaceChildren();
+  const categories = (stats.categories || []).slice(0, 6);
+  const maxCategory = Math.max(1, ...categories.map((item) => Number(item.count || 0)));
+  if (!categories.length) {
+    const empty = document.createElement("div");
+    empty.className = "feedback-empty";
+    empty.textContent = "暂无问题分类";
+    categoriesEl.appendChild(empty);
+  } else {
+    categories.forEach((item) => {
+      const line = document.createElement("div");
+      line.className = "category-line";
+      const name = document.createElement("span");
+      name.className = "category-name";
+      name.textContent = item.name;
+      const track = document.createElement("div");
+      track.className = "category-track";
+      const fill = document.createElement("div");
+      fill.className = "category-fill";
+      fill.style.width = `${Math.max(5, Number(item.count || 0) / maxCategory * 100)}%`;
+      track.appendChild(fill);
+      const count = document.createElement("span");
+      count.className = "category-count";
+      count.textContent = item.count;
+      line.append(name, track, count);
+      categoriesEl.appendChild(line);
+    });
+  }
+
+  const channelsEl = document.getElementById("feedbackChannels");
+  channelsEl.replaceChildren();
+  (stats.channels || []).forEach((item) => {
+    const chip = document.createElement("span");
+    chip.className = "platform-chip";
+    chip.textContent = `${feedbackPlatform(item.name)} ${item.count}`;
+    channelsEl.appendChild(chip);
+  });
+}
+
+function renderFeedbackList(items) {
+  const list = document.getElementById("feedbackList");
+  list.replaceChildren();
+  document.getElementById("feedbackVisibleCount").textContent = `${items.length} 条`;
+  if (!items.length) {
+    const empty = document.createElement("div");
+    empty.className = "feedback-empty";
+    const title = document.createElement("strong");
+    title.textContent = "当前筛选下没有反馈";
+    empty.append(title, document.createTextNode("新出现的明确不满会自动归档到这里。"));
+    const seed = document.createElement("button");
+    seed.className = "feedback-seed";
+    seed.textContent = "载入一组示例反馈";
+    seed.addEventListener("click", seedFeedback);
+    empty.appendChild(seed);
+    list.appendChild(empty);
+    return;
+  }
+  items.forEach((item) => {
+    const row = document.createElement("article");
+    row.className = `feedback-row severity-${item.severity || "medium"}`;
+
+    const source = document.createElement("div");
+    source.className = "feedback-source";
+    const platform = document.createElement("span");
+    platform.className = "feedback-platform";
+    platform.textContent = feedbackPlatform(item.channel);
+    const time = document.createElement("span");
+    time.className = "feedback-time";
+    const date = new Date(item.created_at);
+    time.textContent = Number.isNaN(date.getTime()) ? item.created_at : date.toLocaleString("zh-CN", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+    source.append(platform, time);
+
+    const severity = document.createElement("span");
+    severity.className = `feedback-severity ${item.severity || "medium"}`;
+    severity.textContent = feedbackSeverityLabel(item.severity);
+
+    const contentWrap = document.createElement("div");
+    const content = document.createElement("div");
+    content.className = "feedback-content";
+    content.textContent = item.content;
+    const customer = document.createElement("div");
+    customer.className = "feedback-customer";
+    customer.textContent = `用户 ${shortCustomer(item.customer_id)} · ${item.trigger_word || "负面反馈"}`;
+    contentWrap.append(content, customer);
+
+    const category = document.createElement("div");
+    category.className = "feedback-category";
+    category.textContent = item.category;
+
+    const status = document.createElement("select");
+    status.className = "feedback-status";
+    ["open", "processing", "resolved", "dismissed"].forEach((value) => {
+      const option = document.createElement("option");
+      option.value = value;
+      option.textContent = feedbackStatusLabel(value);
+      option.selected = value === item.status;
+      status.appendChild(option);
+    });
+    status.addEventListener("change", async () => {
+      status.disabled = true;
+      try {
+        await fetch(`/v1/feedback/${encodeURIComponent(item.id)}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: status.value }),
+        });
+        await refreshFeedback();
+      } finally {
+        status.disabled = false;
+      }
+    });
+
+    row.append(source, severity, contentWrap, category, status);
+    list.appendChild(row);
+  });
+}
+
+let feedbackLoading = false;
+async function seedFeedback() {
+  const samples = [
+    { message_id:"seed-quality", customer_id:"buyer-0482", channel:"xhs_qianfan_desktop", category:"商品质量", severity:"high", content:"收到的白衬衫有明显色差，袖口还有开线，真的很失望。", status:"open" },
+    { message_id:"seed-platform", customer_id:"buyer-7319", channel:"douyin_feige", category:"退款售后", severity:"critical", content:"退款一直没到账，再不处理我会申请平台介入。", status:"processing" },
+    { message_id:"seed-size", customer_id:"buyer-2166", channel:"douyin_feige", category:"尺码版型", severity:"medium", content:"裤子尺码偏小，按页面推荐买还是穿不了。", status:"resolved" },
+    { message_id:"seed-logistics", customer_id:"buyer-5390", channel:"xhs_qianfan_desktop", category:"物流履约", severity:"high", content:"下单三天了还没发货，客服也一直没有回复。", status:"processing" },
+    { message_id:"seed-price", customer_id:"buyer-8841", channel:"xhs_qianfan_desktop", category:"价格活动", severity:"medium", content:"刚买完就降价，活动规则太不清楚了。", status:"resolved" },
+    { message_id:"seed-service", customer_id:"buyer-1027", channel:"douyin_feige", category:"客服体验", severity:"high", content:"退货签收一周了还是没人处理，问了几次都很敷衍。", status:"open" },
+  ];
+  const created = await Promise.all(samples.map(async (sample) => {
+    const response = await fetch("/v1/feedback", {
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(sample),
+    });
+    return { ...sample, ...(await response.json()) };
+  }));
+  await Promise.all(created.filter(item => item.feedback_id && item.status !== "open").map(item =>
+    fetch(`/v1/feedback/${encodeURIComponent(item.feedback_id)}/status`, {
+      method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({status:item.status}),
+    })
+  ));
+  await refreshFeedback();
+}
+
+async function refreshFeedback() {
+  if (feedbackLoading) return;
+  feedbackLoading = true;
+  const list = document.getElementById("feedbackList");
+  try {
+    const params = new URLSearchParams();
+    const channel = document.getElementById("feedbackChannelFilter").value;
+    const status = document.getElementById("feedbackStatusFilter").value;
+    const severity = document.getElementById("feedbackSeverityFilter").value;
+    if (channel) params.set("channel", channel);
+    if (status) params.set("status", status);
+    if (severity) params.set("severity", severity);
+    params.set("limit", "200");
+    const [statsResponse, listResponse] = await Promise.all([
+      fetch("/v1/feedback/stats?days=30"),
+      fetch(`/v1/feedback?${params.toString()}`),
+    ]);
+    if (!statsResponse.ok || !listResponse.ok) throw new Error("反馈接口暂不可用");
+    const [stats, data] = await Promise.all([statsResponse.json(), listResponse.json()]);
+    renderFeedbackStats(stats);
+    renderFeedbackList(data.feedback || []);
+  } catch (error) {
+    list.innerHTML = `<div class="feedback-empty"><strong>反馈数据读取失败</strong>${error.message}</div>`;
+  } finally {
+    feedbackLoading = false;
+  }
+}
+
 // 事件绑定
+document.querySelectorAll(".workspace-tab").forEach((button) => {
+  button.addEventListener("click", () => switchWorkspace(button.dataset.workspace));
+});
 document.querySelectorAll(".scene-tab").forEach((t) => {
   t.addEventListener("click", () => switchScene(t.dataset.scene));
 });
@@ -527,6 +1011,10 @@ inputEl.addEventListener("keydown", (e) => {
 document.getElementById("takeOverBtn").addEventListener("click", () => handleHandoff("take_over"));
 document.getElementById("releaseBtn").addEventListener("click", () => handleHandoff("release"));
 document.getElementById("manualReplyBtn").addEventListener("click", sendManualReply);
+document.getElementById("feedbackRefresh").addEventListener("click", refreshFeedback);
+["feedbackChannelFilter", "feedbackStatusFilter", "feedbackSeverityFilter"].forEach((id) => {
+  document.getElementById(id).addEventListener("change", refreshFeedback);
+});
 
 // 请求浏览器通知权限
 if ("Notification" in window && Notification.permission === "default") {
@@ -537,8 +1025,12 @@ if ("Notification" in window && Notification.permission === "default") {
 healthCheck();
 switchScene("pre");
 refreshModeration();
+refreshFeedback();
 setInterval(healthCheck, 15000);
 setInterval(refreshModeration, 5000);
+setInterval(() => {
+  if (!feedbackWorkspace.classList.contains("hidden")) refreshFeedback();
+}, 12000);
 </script>
 </body>
 </html>

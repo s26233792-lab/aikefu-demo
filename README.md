@@ -99,6 +99,7 @@ Platform Adapter（MVP 实验层）
 | **会话接管** | 「🚫 接管」停止自动回复转人工，「✅ 恢复」重新交还 Agent |
 | **浏览器通知** | 有新待办时弹桌面通知（需授权 Notification） |
 | **闭环发送** | 审批通过 → 待发送队列（按平台和顾客隔离）→ 对应 Worker 回填 → 回执 |
+| **不良反馈看板** | 自动归档明确不满，按渠道、问题类型、严重度、状态和 30 天趋势统计，可跟进到已解决 |
 
 ### 审批队列 API
 
@@ -111,6 +112,9 @@ Platform Adapter（MVP 实验层）
 | `POST /v1/outbox` | 手写回复入发送队列 |
 | `GET /v1/outbox/pull` | Worker 按 `channel`、`customer_id` 拉取待发送内容 |
 | `POST /platforms/douyin/decide` | 抖店飞鸽桥接层的稳定内部消息入口 |
+| `GET /v1/feedback` | 查询用户不良反馈，支持渠道、状态、类型和严重度筛选 |
+| `GET /v1/feedback/stats` | 获取反馈总量、待处理、高危、解决率、问题构成和日期趋势 |
+| `POST /v1/feedback/{id}/status` | 将反馈更新为待跟进、处理中、已解决或已忽略 |
 | `POST /v1/outbox/{id}/ack` | 确认已发送 |
 
 ## 部署方式（macOS / Windows）

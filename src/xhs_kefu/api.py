@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -20,6 +21,7 @@ from pydantic import BaseModel, Field
 
 from .config import Settings
 from .domain import IncomingMessage
+from .feedback import detect_negative_feedback
 from .fixtures import Fixtures
 from .planner import build_planner
 from .policy import CompensationRule, PolicyEngine
@@ -59,6 +61,21 @@ class DouyinBridgeRequest(BaseModel):
     message_id: str | None = None
     tenant_id: str = "demo"
     store_id: str = "STORE-001"
+
+
+class FeedbackCreateRequest(BaseModel):
+    content: str
+    customer_id: str = "manual"
+    tenant_id: str = "demo"
+    store_id: str = "STORE-001"
+    channel: str = "manual"
+    category: str | None = None
+    severity: str | None = None
+    message_id: str | None = None
+
+
+class FeedbackStatusRequest(BaseModel):
+    status: str
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -131,6 +148,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
     zhixia_runtime = ZhixiaRuntime(llm_agent=zhixia_llm)
 
+    def _record_feedback(
+        *,
+        text: str,
+        customer_id: str,
+        session_key: str,
+        tenant_id: str,
+        store_id: str,
+        channel: str,
+        message_id: str | None,
+        result: dict[str, Any] | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        created_at: str | None = None,
+    ) -> str | None:
+        result = result or {}
+        signal = detect_negative_feedback(
+            text,
+            tone=result.get("tone"),
+            disposition=result.get("disposition"),
+        )
+        if signal is None and not category:
+            return None
+        identity = message_id or hashlib.sha1(
+            f"{session_key}|{text}".encode("utf-8")
+        ).hexdigest()[:20]
+        feedback_id = f"fb_{hashlib.sha1(f'{channel}|{identity}'.encode()).hexdigest()[:18]}"
+        now = created_at or datetime.now(timezone.utc).isoformat()
+        store.add_feedback(
+            id=feedback_id,
+            message_id=message_id,
+            session_key=session_key,
+            customer_id=customer_id,
+            tenant_id=tenant_id,
+            store_id=store_id,
+            channel=channel,
+            category=category or signal.category,
+            severity=severity or signal.severity,
+            trigger_word=signal.trigger if signal else "manual",
+            content=text,
+            created_at=now,
+        )
+        return feedback_id
+
     @app.post("/zhixia/decide")
     async def zhixia_decide(req: ZhixiaRequest, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
@@ -141,7 +201,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         handoff = store.get_handoff(session_key)
         if handoff and handoff.get("state") == "human_active":
-            return {
+            taken_over = {
                 "status": "taken_over",
                 "disposition": "handoff_human",
                 "needs_approval": True,
@@ -149,10 +209,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "session_key": session_key,
                 "handoff_reason": handoff.get("reason") or "operator_takeover",
             }
+            feedback_id = _record_feedback(
+                text=req.text, customer_id=customer_id, session_key=session_key,
+                tenant_id=req.tenant_id, store_id=req.store_id, channel=req.channel,
+                message_id=req.message_id, result=taken_over,
+            )
+            if feedback_id:
+                taken_over["feedback_id"] = feedback_id
+            return taken_over
         history = store.recent_turns(session_key, 8)
         result = await zhixia_runtime.handle(text=req.text, history=history)
         # 持久化会话
-        now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         store.save_turn(
             dedupe_key=f"{session_key}|{hashlib.sha1(req.text.encode()).hexdigest()[:12]}",
             session_key=session_key, role="user", content=req.text, created_at=now,
@@ -195,6 +263,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result["needs_approval"] = needs_approval
         result["moderation_id"] = mod_id
         result["session_key"] = session_key
+        feedback_id = _record_feedback(
+            text=req.text, customer_id=customer_id, session_key=session_key,
+            tenant_id=req.tenant_id, store_id=req.store_id, channel=req.channel,
+            message_id=req.message_id, result=result, created_at=now,
+        )
+        if feedback_id:
+            result["feedback_id"] = feedback_id
         return result
 
     @app.post("/platforms/douyin/decide")
@@ -254,7 +329,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             text=req.text,
             attachments=tuple(req.attachments),
         )
-        return await runtime.handle_message(message)
+        result = await runtime.handle_message(message)
+        session_key = message.session_key
+        feedback_id = _record_feedback(
+            text=req.text, customer_id=req.customer_id, session_key=session_key,
+            tenant_id=req.tenant_id, store_id=req.store_id, channel=req.channel,
+            message_id=req.message_id, result=result,
+        )
+        if feedback_id:
+            result["feedback_id"] = feedback_id
+        return result
 
     @app.get("/v1/actions")
     async def list_actions(x_api_key: str | None = Header(default=None)):
@@ -294,6 +378,69 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _auth(x_api_key)
         session_key = "|".join((tenant_id, channel, store_id, customer_id))
         return {"history": runtime.history(session_key)}
+
+    # ----- 用户不良反馈与统计 -----
+
+    @app.get("/v1/feedback")
+    async def list_feedback(
+        status: str | None = None,
+        channel: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        limit: int = 100,
+        x_api_key: str | None = Header(default=None),
+    ):
+        _auth(x_api_key)
+        return {
+            "feedback": store.list_feedback(
+                status=status, channel=channel, category=category,
+                severity=severity, limit=limit,
+            )
+        }
+
+    @app.get("/v1/feedback/stats")
+    async def feedback_stats(
+        days: int = 30,
+        x_api_key: str | None = Header(default=None),
+    ):
+        _auth(x_api_key)
+        return store.feedback_stats(days)
+
+    @app.post("/v1/feedback")
+    async def create_feedback(
+        req: FeedbackCreateRequest,
+        x_api_key: str | None = Header(default=None),
+    ):
+        _auth(x_api_key)
+        content = req.content.strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="content required")
+        session_key = "|".join(
+            ("feedback", req.tenant_id, req.channel, req.store_id, req.customer_id)
+        )
+        feedback_id = _record_feedback(
+            text=content, customer_id=req.customer_id, session_key=session_key,
+            tenant_id=req.tenant_id, store_id=req.store_id, channel=req.channel,
+            message_id=req.message_id, category=req.category or "其他反馈",
+            severity=req.severity or "medium",
+        )
+        return {"ok": True, "feedback_id": feedback_id}
+
+    @app.post("/v1/feedback/{feedback_id}/status")
+    async def update_feedback_status(
+        feedback_id: str,
+        req: FeedbackStatusRequest,
+        x_api_key: str | None = Header(default=None),
+    ):
+        _auth(x_api_key)
+        if req.status not in {"open", "processing", "resolved", "dismissed"}:
+            raise HTTPException(status_code=400, detail="invalid feedback status")
+        item = store.update_feedback_status(
+            feedback_id, req.status, datetime.now(timezone.utc).isoformat()
+        )
+        if item is None:
+            raise HTTPException(status_code=404, detail="feedback not found")
+        return {"ok": True, "feedback": item}
 
     # ----- 人工审批 / 接管 -----
 

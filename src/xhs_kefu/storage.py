@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -95,6 +96,32 @@ class SQLiteStore:
                     updated_at TEXT NOT NULL
                 )
                 """
+            )
+            self.connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS feedback (
+                    id TEXT PRIMARY KEY,
+                    message_id TEXT,
+                    session_key TEXT NOT NULL,
+                    customer_id TEXT,
+                    tenant_id TEXT NOT NULL DEFAULT 'demo',
+                    store_id TEXT NOT NULL DEFAULT 'STORE-001',
+                    channel TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    trigger_word TEXT,
+                    content TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at)"
+            )
+            self.connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status)"
             )
 
         # 兼容已经运行过的数据库：SQLite 的 CREATE TABLE IF NOT EXISTS
@@ -366,3 +393,136 @@ class SQLiteStore:
             self.connection.execute(
                 "UPDATE outbox SET status = ? WHERE id = ?", (status, id)
             )
+
+    # ----- 用户不良反馈 -----
+
+    def add_feedback(
+        self,
+        *,
+        id: str,
+        message_id: str | None,
+        session_key: str,
+        customer_id: str,
+        tenant_id: str,
+        store_id: str,
+        channel: str,
+        category: str,
+        severity: str,
+        trigger_word: str,
+        content: str,
+        created_at: str,
+    ) -> bool:
+        """写入一条反馈；相同消息的确定性 id 会自动去重。"""
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                INSERT OR IGNORE INTO feedback(
+                    id, message_id, session_key, customer_id, tenant_id, store_id,
+                    channel, category, severity, trigger_word, content, status,
+                    created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?, 'open', ?, ?)
+                """,
+                (
+                    id, message_id, session_key, customer_id, tenant_id, store_id,
+                    channel, category, severity, trigger_word, content,
+                    created_at, created_at,
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def get_feedback(self, id: str) -> dict | None:
+        row = self.connection.execute(
+            "SELECT * FROM feedback WHERE id = ?", (id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_feedback(
+        self,
+        *,
+        status: str | None = None,
+        channel: str | None = None,
+        category: str | None = None,
+        severity: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (
+            ("status", status), ("channel", channel),
+            ("category", category), ("severity", severity),
+        ):
+            if value:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(int(limit), 500)))
+        rows = self.connection.execute(
+            f"SELECT * FROM feedback{where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_feedback_status(self, id: str, status: str, updated_at: str) -> dict | None:
+        with self.connection:
+            self.connection.execute(
+                "UPDATE feedback SET status = ?, updated_at = ? WHERE id = ?",
+                (status, updated_at, id),
+            )
+        return self.get_feedback(id)
+
+    def feedback_stats(self, days: int = 30) -> dict:
+        days = max(1, min(int(days), 365))
+        now = datetime.now(timezone.utc)
+        start_day = (now - timedelta(days=days - 1)).date()
+        cutoff = datetime.combine(start_day, datetime.min.time(), timezone.utc).isoformat()
+
+        summary = self.connection.execute(
+            """
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status IN ('open','processing') THEN 1 ELSE 0 END) AS unresolved,
+                SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved,
+                SUM(CASE WHEN severity = 'critical' THEN 1 ELSE 0 END) AS critical,
+                SUM(CASE WHEN substr(created_at,1,10) = ? THEN 1 ELSE 0 END) AS today
+            FROM feedback WHERE created_at >= ?
+            """,
+            (now.date().isoformat(), cutoff),
+        ).fetchone()
+
+        def grouped(column: str) -> list[dict]:
+            rows = self.connection.execute(
+                f"SELECT {column} AS name, COUNT(*) AS count FROM feedback "
+                f"WHERE created_at >= ? GROUP BY {column} ORDER BY count DESC, name",
+                (cutoff,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+        daily_rows = self.connection.execute(
+            """
+            SELECT substr(created_at,1,10) AS day, COUNT(*) AS count
+            FROM feedback WHERE created_at >= ? GROUP BY day ORDER BY day
+            """,
+            (cutoff,),
+        ).fetchall()
+        daily_map = {row["day"]: row["count"] for row in daily_rows}
+        trend = []
+        for offset in range(days):
+            day = (start_day + timedelta(days=offset)).isoformat()
+            trend.append({"day": day, "count": daily_map.get(day, 0)})
+
+        total = int(summary["total"] or 0)
+        resolved = int(summary["resolved"] or 0)
+        return {
+            "days": days,
+            "total": total,
+            "today": int(summary["today"] or 0),
+            "unresolved": int(summary["unresolved"] or 0),
+            "resolved": resolved,
+            "critical": int(summary["critical"] or 0),
+            "resolution_rate": round(resolved * 100 / total, 1) if total else 0.0,
+            "categories": grouped("category"),
+            "channels": grouped("channel"),
+            "severities": grouped("severity"),
+            "statuses": grouped("status"),
+            "trend": trend,
+        }
