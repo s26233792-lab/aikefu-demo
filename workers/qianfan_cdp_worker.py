@@ -109,11 +109,18 @@ class QianfanCdpWorker:
         self.sent_texts: set[str] = set()  # 记录自己发过的内容，用于过滤"复读"
         self._running = False
 
-    async def decide(self, text: str, customer_id: str) -> dict | None:
+    async def decide(
+        self, text: str, customer_id: str, message_id: str | None = None
+    ) -> dict | None:
         # 调用栀夏 ZHIXIA Agent（真实千帆消息 → 栀夏小栀回复）
         payload = {
             "text": text,
             "session_key": customer_id or "unknown",
+            "customer_id": customer_id or "unknown",
+            "store_id": self.store_id,
+            "tenant_id": self.tenant_id,
+            "channel": self.channel,
+            "message_id": message_id,
         }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -200,8 +207,17 @@ class QianfanCdpWorker:
 
     async def _poll_outbox(self, session: CdpSession) -> None:
         """轮询待发送队列，把人工审批通过/手写的回复回填到千帆。"""
+        customer_id = session.evaluate(_CURRENT_CUSTOMER_JS)
+        # 当前顾客身份无法确认时不领取，避免把人工回复发进错误会话。
+        if not customer_id:
+            return
+        headers = {"X-Api-Key": self.api_key} if self.api_key else {}
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{self.decision_url.rstrip('/')}/v1/outbox/pull")
+            resp = await client.get(
+                f"{self.decision_url.rstrip('/')}/v1/outbox/pull",
+                headers=headers,
+                params={"channel": self.channel, "customer_id": customer_id},
+            )
             resp.raise_for_status()
             data = resp.json()
         for item in data.get("outbox", []):
@@ -215,14 +231,13 @@ class QianfanCdpWorker:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 await client.post(
                     f"{self.decision_url.rstrip('/')}/v1/outbox/{oid}/ack",
+                    headers=headers,
                     json={"status": "sent"},
                 )
 
     async def _poll_once(self, session: CdpSession) -> None:
         # 1. 读当前会话的顾客昵称
-        contact = session.evaluate(
-            "document.querySelector('.current-contact, .user-info') ? document.querySelector('.current-contact, .user-info').innerText.split('\\n')[0].trim() : ''"
-        )
+        contact = session.evaluate(_CURRENT_CUSTOMER_JS)
         # 2. 读消息区最后一条真正的顾客消息（方向判定版）
         last_customer = session.evaluate(_LAST_CUSTOMER_JS)
         if not last_customer:
@@ -241,7 +256,7 @@ class QianfanCdpWorker:
         print(f"[cdp-worker v2] 检测到新顾客消息: {text[:40]}")
 
         customer_id = contact or "unknown"
-        decision = await self.decide(text, customer_id)
+        decision = await self.decide(text, customer_id, fingerprint)
         if not decision:
             return
         # 人工接管中的会话：不自动回复，但在真实千帆里弹提醒 + 系统级强制提醒
@@ -362,6 +377,30 @@ _LAST_CUSTOMER_JS = r"""
     return { text, hash: 'm' + hash.toString(16) };
   }
   return null;
+})()
+"""
+
+# 当前会话顾客标识。空白会话顶部只显示“新客/消费/客单价/退款率”统计，
+# 不能把这段统计误当顾客昵称，否则审批回填会永远匹配不到正确会话。
+_CURRENT_CUSTOMER_JS = r"""
+(() => {
+  const selectors = [
+    '.contact-list .chat-item.active [class*="name"]',
+    '.contact-list [class*="chat-item"][class*="active"] [class*="name"]',
+    '.contact-list [aria-selected="true"] [class*="name"]',
+    '.chat-box-top-bar [class*="nickname"]',
+    '.chat-box-top-bar [class*="user-name"]',
+    '.current-contact [class*="nickname"]',
+    '.current-contact [class*="user-name"]'
+  ];
+  const invalid = /新客|共消费|客单价|退款率|暂无对话|当前会话|全部会话/;
+  for (const selector of selectors) {
+    for (const el of document.querySelectorAll(selector)) {
+      const text = (el.innerText || el.textContent || '').split('\n')[0].trim();
+      if (text && !invalid.test(text) && text.length <= 80) return text;
+    }
+  }
+  return '';
 })()
 """
 

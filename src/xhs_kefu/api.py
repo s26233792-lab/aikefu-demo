@@ -40,6 +40,25 @@ class DecideRequest(BaseModel):
 class ZhixiaRequest(BaseModel):
     text: str
     session_key: str = "zhixia-default"
+    tenant_id: str = "demo"
+    store_id: str = "STORE-001"
+    channel: str = "xhs_qianfan_desktop"
+    customer_id: str | None = None
+    message_id: str | None = None
+
+
+class DouyinBridgeRequest(BaseModel):
+    """抖店飞鸽桥接层的稳定内部协议。
+
+    这里不冒充抖店开放平台的原始回调格式；官方网关完成验签后，或本地
+    飞鸽 Worker 读取消息后，都统一转换成这一结构再进入 Agent。
+    """
+
+    text: str
+    customer_id: str
+    message_id: str | None = None
+    tenant_id: str = "demo"
+    store_id: str = "STORE-001"
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -85,7 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         intent_classifier=intent_classifier,
     )
 
-    app = FastAPI(title="小红书千帆客服 Agent", version="1.0.0")
+    app = FastAPI(title="栀夏多平台客服 Agent", version="1.1.0")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -116,7 +135,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def zhixia_decide(req: ZhixiaRequest, x_api_key: str | None = Header(default=None)):
         _auth(x_api_key)
         # 从 store 读最近会话（复用单 Agent 的存储）
-        session_key = f"zhixia|{req.session_key}"
+        customer_id = req.customer_id or req.session_key or "unknown"
+        session_key = "|".join(
+            ("zhixia", req.tenant_id, req.channel, req.store_id, customer_id)
+        )
+        handoff = store.get_handoff(session_key)
+        if handoff and handoff.get("state") == "human_active":
+            return {
+                "status": "taken_over",
+                "disposition": "handoff_human",
+                "needs_approval": True,
+                "reply": "",
+                "session_key": session_key,
+                "handoff_reason": handoff.get("reason") or "operator_takeover",
+            }
         history = store.recent_turns(session_key, 8)
         result = await zhixia_runtime.handle(text=req.text, history=history)
         # 持久化会话
@@ -144,18 +176,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # 需人工/待审批时，入审批队列（供审批台 + Worker 弹提醒）
         mod_id = None
         if needs_approval:
-            mod_id = result.get("moderation_id") or f"mod_{hashlib.sha1(f'{req.text}{req.session_key}'.encode()).hexdigest()[:16]}"
+            identity = req.message_id or f"{req.text}{session_key}"
+            deterministic_mod_id = f"mod_{hashlib.sha1(f'{session_key}|{identity}'.encode()).hexdigest()[:16]}"
+            mod_id = deterministic_mod_id if req.message_id else (
+                result.get("moderation_id") or deterministic_mod_id
+            )
             store.add_moderation(
-                id=mod_id, session_key=session_key, customer_id=req.session_key,
+                id=mod_id, session_key=session_key, customer_id=customer_id,
                 kind="handoff" if disposition == "handoff_human" else "reply",
                 content=result.get("reply") or req.text, intent=result.get("intent", "handoff"),
                 reason_code=result.get("handoff_reason") or "NEEDS_HUMAN",
                 created_at=now,
+                tenant_id=req.tenant_id,
+                store_id=req.store_id,
+                channel=req.channel,
             )
         result["status"] = status
         result["needs_approval"] = needs_approval
         result["moderation_id"] = mod_id
+        result["session_key"] = session_key
         return result
+
+    @app.post("/platforms/douyin/decide")
+    async def douyin_decide(
+        req: DouyinBridgeRequest,
+        x_api_key: str | None = Header(default=None),
+    ):
+        """飞鸽本地桥接/官方验签网关共用的抖店消息入口。"""
+        return await zhixia_decide(
+            ZhixiaRequest(
+                text=req.text,
+                session_key=req.customer_id,
+                customer_id=req.customer_id,
+                message_id=req.message_id,
+                tenant_id=req.tenant_id,
+                store_id=req.store_id,
+                channel="douyin_feige",
+            ),
+            x_api_key,
+        )
 
     @app.get("/zhixia/logistics")
     async def zhixia_logistics(
@@ -256,10 +315,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             content = result.get("content", "")
             if content:
                 runtime.enqueue_reply(
-                    session_key=f"demo|xhs_qianfan|STORE-001|{result.get('customer_id', '')}",
+                    session_key=result.get("session_key", ""),
                     customer_id=result.get("customer_id", ""),
                     content=content,
-                    channel="xhs_qianfan",
+                    channel=result.get("channel", "xhs_qianfan_desktop"),
                 )
                 result["enqueued"] = True
         return result
@@ -309,13 +368,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session_key=body.get("session_key", ""),
             customer_id=body.get("customer_id", ""),
             content=content,
-            channel=body.get("channel", "xhs_qianfan"),
+            channel=body.get("channel", "xhs_qianfan_desktop"),
         )
 
     @app.get("/v1/outbox/pull")
-    async def pull_outbox(x_api_key: str | None = Header(default=None)):
+    async def pull_outbox(
+        channel: str | None = None,
+        customer_id: str | None = None,
+        x_api_key: str | None = Header(default=None),
+    ):
         _auth(x_api_key)
-        return {"outbox": runtime.pull_outbox()}
+        return {
+            "outbox": runtime.pull_outbox(
+                channel=channel, customer_id=customer_id
+            )
+        }
 
     @app.post("/v1/outbox/{oid}/ack")
     async def ack_outbox(oid: str, body: dict[str, Any] | None = None, x_api_key: str | None = Header(default=None)):

@@ -158,7 +158,8 @@ class AgentRuntime:
                 self.store.add_moderation(
                     id=mid, session_key=message.session_key, customer_id=message.customer_id,
                     kind="handoff", content=message.text, intent="handoff_human",
-                    reason_code=reason, created_at=_iso_now(),
+                    reason_code=reason, created_at=_iso_now(), tenant_id=message.tenant_id,
+                    store_id=message.store_id, channel=message.channel,
                 )
                 steps.append(TraceStep("handoff", "handoff_human", reason))
                 response = {
@@ -386,6 +387,9 @@ class AgentRuntime:
                 intent=intent,
                 reason_code=reason,
                 created_at=_iso_now(),
+                tenant_id=message.tenant_id,
+                store_id=message.store_id,
+                channel=message.channel,
             )
             response["moderation_id"] = mid
             response["status"] = "pending_approval"
@@ -439,7 +443,17 @@ class AgentRuntime:
         if mod is None:
             return {"ok": False, "error": "moderation_not_found"}
         self.store.update_moderation_status(mod_id, "approved")
-        return {"ok": True, "id": mod_id, "kind": mod["kind"], "content": mod["content"], "customer_id": mod["customer_id"]}
+        return {
+            "ok": True,
+            "id": mod_id,
+            "kind": mod["kind"],
+            "content": mod["content"],
+            "customer_id": mod["customer_id"],
+            "session_key": mod["session_key"],
+            "tenant_id": mod.get("tenant_id", "demo"),
+            "store_id": mod.get("store_id", "STORE-001"),
+            "channel": mod.get("channel", "xhs_qianfan_desktop"),
+        }
 
     def reject_moderation(self, mod_id: str) -> dict:
         mod = self.store.get_moderation(mod_id)
@@ -476,8 +490,10 @@ class AgentRuntime:
         )
         return {"ok": True, "id": oid}
 
-    def pull_outbox(self) -> list[dict]:
-        return self.store.pull_outbox()
+    def pull_outbox(
+        self, channel: str | None = None, customer_id: str | None = None
+    ) -> list[dict]:
+        return self.store.pull_outbox(channel=channel, customer_id=customer_id)
 
     def ack_outbox(self, oid: str, status: str = "sent") -> dict:
         self.store.mark_outbox(oid, status)

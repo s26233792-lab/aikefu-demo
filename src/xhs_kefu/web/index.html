@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>栀夏 ZHIXIA 女装客服 Agent · Demo</title>
+<title>栀夏 ZHIXIA 多平台客服工作台</title>
 <style>
   :root {
     --xhs-red: #165dff;
@@ -113,7 +113,7 @@
 </head>
 <body>
 <header>
-  <div class="logo">🌿 栀夏 ZHIXIA 女装客服 <span class="badge">Agent Demo</span></div>
+  <div class="logo">🌿 栀夏 ZHIXIA 女装客服 <span class="badge">千帆 + 飞鸽</span></div>
   <div class="status"><span class="dot" id="statusDot"></span><span id="statusText">加载中…</span></div>
 </header>
 <main>
@@ -129,7 +129,7 @@
     </div>
     <div class="chat" id="chat"></div>
     <div class="input-bar">
-      <input id="input" placeholder="输入顾客消息，模拟千帆网页版发消息…" />
+      <input id="input" placeholder="输入顾客消息…" />
       <button class="btn" id="send">发送</button>
     </div>
   </div>
@@ -143,7 +143,7 @@
       <h3>🛡️ 人工审批队列（待审回复 / 转人工）</h3>
       <div id="moderation"></div>
       <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
-        <h3 style="font-size:13px;color:#86909c;margin-bottom:6px;">✍️ 人工手写回复（发送到千帆）</h3>
+        <h3 style="font-size:13px;color:#86909c;margin-bottom:6px;">✍️ 人工手写回复（发送到原平台）</h3>
         <input id="manualReplyInput" placeholder="输入要发给当前顾客的消息…" style="width:100%;padding:8px 10px;border:1px solid #e5e6eb;border-radius:8px;font-size:13px;" />
         <button class="btn" id="manualReplyBtn" style="font-size:12px;margin-top:6px;">发送手写回复</button>
       </div>
@@ -332,6 +332,10 @@ async function decide(text, customerId) {
   const payload = {
     text: text,
     session_key: customerId,
+    customer_id: customerId,
+    channel: "xhs_qianfan_desktop",
+    store_id: "STORE-001",
+    tenant_id: "demo",
   };
   const r = await fetch("/zhixia/decide", {
     method: "POST",
@@ -401,56 +405,9 @@ async function refreshActions() {
   await refreshModeration();
 }
 
-async function refreshModeration() {
-  try {
-    const r = await fetch("/v1/moderation?status=pending");
-    const j = await r.json();
-    const el = document.getElementById("moderation");
-    el.innerHTML = "";
-    const items = j.moderation || [];
-    if (items.length === 0) {
-      el.innerHTML = '<div style="color:#86909c;font-size:13px;">暂无待审批项（普通咨询会自动回复，无需审批）</div>';
-      return;
-    }
-    items.forEach((m) => {
-      const item = document.createElement("div");
-      item.className = "action-item";
-      const row = document.createElement("div");
-      row.className = "row";
-      const kindLabel = m.kind === "reply" ? "💬 待审回复" : "⚙️ 写操作";
-      row.innerHTML = `<b>${kindLabel}</b> <span style="color:#86909c">${(m.id||'').slice(0,12)} · ${m.intent||''}</span>`;
-      const ok = document.createElement("button");
-      ok.className = "btn";
-      ok.textContent = "✅ 通过发送";
-      ok.onclick = async () => {
-        await fetch(`/v1/moderation/${m.id}/approve`, { method: "POST" });
-        refreshModeration();
-        addMsg("system", "✅ 已审批通过并发送：" + (m.content||'').slice(0,30));
-      };
-      const no = document.createElement("button");
-      no.className = "btn secondary";
-      no.textContent = "❌ 拒绝";
-      no.style.marginLeft = "6px";
-      no.onclick = async () => {
-        await fetch(`/v1/moderation/${m.id}/reject`, { method: "POST" });
-        refreshModeration();
-        addMsg("system", "❌ 已拒绝该待审项");
-      };
-      row.appendChild(ok);
-      row.appendChild(no);
-      item.appendChild(row);
-      const detail = document.createElement("div");
-      detail.style.cssText = "color:#86909c;font-size:12px;margin-top:4px;word-break:break-all;";
-      detail.textContent = (m.content || '').slice(0,120) + "  [" + (m.reason_code || '') + "]";
-      item.appendChild(detail);
-      el.appendChild(item);
-    });
-  } catch (e) {}
-}
-
 async function handleHandoff(action) {
   const sid = SCENES[currentScene].customerId;
-  const sessionKey = "demo|xhs_qianfan|STORE-001|" + sid;
+  const sessionKey = "zhixia|demo|xhs_qianfan_desktop|STORE-001|" + sid;
   await fetch("/v1/handoff", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -459,20 +416,27 @@ async function handleHandoff(action) {
   addMsg("system", action === "take_over" ? "🚫 已接管会话，Agent 停止自动回复" : "✅ 已恢复自动回复");
 }
 
-// 手写回复发送到千帆（转人工后的实际操作）
+let manualContext = null;
+
+// 手写回复默认用于当前演示顾客；也可在待办项中选择真实千帆/抖店会话。
 async function sendManualReply() {
   const input = document.getElementById("manualReplyInput");
   const text = input.value.trim();
   if (!text) { addMsg("system", "⚠️ 请输入要发送的内容"); return; }
   const sid = SCENES[currentScene].customerId;
-  const sessionKey = "demo|xhs_qianfan|STORE-001|" + sid;
+  const context = manualContext || {
+    session_key: "zhixia|demo|xhs_qianfan_desktop|STORE-001|" + sid,
+    customer_id: sid,
+    channel: "xhs_qianfan_desktop",
+  };
   await fetch("/v1/outbox", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_key: sessionKey, customer_id: sid, content: text, channel: "xhs_qianfan" }),
+    body: JSON.stringify({ ...context, content: text }),
   });
   input.value = "";
-  addMsg("system", "✍️ 已加入发送队列，将自动回填到千帆");
+  const platform = context.channel === "douyin_feige" ? "抖店飞鸽" : "千帆";
+  addMsg("system", "✍️ 已加入" + platform + "发送队列（顾客：" + context.customer_id + "）");
   addMsg("agent", text); // 本地也显示
 }
 
@@ -483,7 +447,7 @@ function notifyPending(items) {
   lastPendingCount = items.length;
   if (hasNew && items.length > 0 && Notification.permission === "granted") {
     const kinds = items.map(m => m.kind === "handoff" ? "转人工" : (m.kind === "reply" ? "待审回复" : "写操作")).join("、");
-    new Notification("小红书客服待办", { body: `${items.length} 条待人工处理：${kinds}` });
+    new Notification("栀夏多平台客服待办", { body: `${items.length} 条待人工处理：${kinds}` });
   }
 }
 
@@ -506,14 +470,15 @@ async function refreshModeration() {
       const row = document.createElement("div");
       row.className = "row";
       const kindLabel = m.kind === "handoff" ? "🙋 转人工" : (m.kind === "reply" ? "💬 待审回复" : "⚙️ 写操作");
-      row.innerHTML = `<b>${kindLabel}</b> <span style="color:#86909c">${(m.id||'').slice(0,12)} · ${m.intent||''}</span>`;
+      const platformLabel = m.channel === "douyin_feige" ? "抖店飞鸽" : "千帆";
+      row.innerHTML = `<b>${kindLabel}</b> <span style="color:#86909c">${platformLabel} · ${(m.id||'').slice(0,12)} · ${m.intent||''}</span>`;
       const ok = document.createElement("button");
       ok.className = "btn";
-      ok.textContent = "✅ 通过发送";
+      ok.textContent = m.kind === "reply" ? "✅ 通过发送" : "✅ 标记处理";
       ok.onclick = async () => {
         await fetch(`/v1/moderation/${m.id}/approve`, { method: "POST" });
         refreshModeration();
-        addMsg("system", "✅ 已审批通过并加入发送队列：" + (m.content||'').slice(0,30));
+        addMsg("system", m.kind === "reply" ? "✅ 已审批通过并加入原平台发送队列：" + (m.content||'').slice(0,30) : "✅ 已标记为人工处理");
       };
       const no = document.createElement("button");
       no.className = "btn secondary";
@@ -526,6 +491,21 @@ async function refreshModeration() {
       };
       row.appendChild(ok);
       row.appendChild(no);
+      const choose = document.createElement("button");
+      choose.className = "btn secondary";
+      choose.style.marginLeft = "6px";
+      choose.textContent = "✍️ 回复此会话";
+      choose.onclick = () => {
+        manualContext = {
+          session_key: m.session_key,
+          customer_id: m.customer_id,
+          channel: m.channel || "xhs_qianfan_desktop",
+        };
+        const input = document.getElementById("manualReplyInput");
+        input.placeholder = `回复 ${platformLabel} · ${m.customer_id || '当前顾客'}…`;
+        input.focus();
+      };
+      row.appendChild(choose);
       item.appendChild(row);
       const detail = document.createElement("div");
       detail.style.cssText = "color:#86909c;font-size:12px;margin-top:4px;word-break:break-all;";

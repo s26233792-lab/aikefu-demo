@@ -11,7 +11,7 @@ stop_pid_file() {
   pid=$(/bin/cat "$pid_file" 2>/dev/null)
   if [[ "$pid" == <-> ]] && /bin/kill -0 "$pid" >/dev/null 2>&1; then
     command=$(/bin/ps -p "$pid" -o command= 2>/dev/null)
-    if [[ "$command" == *'run.py web'* || "$command" == *'run.py desktop'* ]]; then
+    if [[ "$command" == *'run.py web'* || "$command" == *'run.py desktop'* || "$command" == *'run.py douyin'* ]]; then
       /bin/kill "$pid" >/dev/null 2>&1
     fi
   fi
@@ -19,6 +19,7 @@ stop_pid_file() {
 }
 
 stop_pid_file "$project_dir/data/macos-worker.pid"
+stop_pid_file "$project_dir/data/macos-douyin-worker.pid"
 stop_pid_file "$project_dir/data/macos-api.pid"
 
 quit_choice=$(/usr/bin/osascript -e 'button returned of (display dialog "API 和自动回复 Worker 已停止。是否同时退出千帆客服工作台？" with title "停止栀夏客服 Agent" buttons {"保留千帆", "退出千帆"} default button "保留千帆")' 2>/dev/null || true)

@@ -61,6 +61,9 @@ def main() -> None:
     naturalized = naturalize_customer_reply("我可以帮您留意发货情况，有需要随时找我。")
     assert "我可以帮您留意发货情况" not in naturalized
     assert "订单页留意发货状态" in naturalized
+    assert "\n- " not in naturalize_customer_reply("推荐：\n- 白衬衫\n- 西装")
+    assert "· 白衬衫" in naturalize_customer_reply("推荐：\n- 白衬衫")
+    assert "1、白衬衫" in naturalize_customer_reply("推荐：\n1. 白衬衫")
     assert "这个" not in naturalize_customer_reply("明天到货，这个我无法保证。")
 
     exception = asyncio.run(

@@ -1,6 +1,6 @@
-# 栀夏 ZHIXIA 女装客服 Agent · Demo
+# 栀夏 ZHIXIA 女装多平台客服 Agent · Demo
 
-一个**女装电商 AI 客服演示**，按 `agent.md` 规格实现：品牌「栀夏 ZHIXIA」客服「小栀」，面向 22~38 岁女性（通勤/简约/轻法式），支持售前导购、订单物流查询、发货履约、会员查询、售后处理，并包含商品、订单、会员和店铺政策数据。
+一个**女装电商 AI 客服演示**，按 `agent.md` 规格实现：品牌「栀夏 ZHIXIA」客服「小栀」，面向 22~38 岁女性（通勤/简约/轻法式），支持售前导购、订单物流查询、发货履约、会员查询、售后处理，并已接入小红书千帆和抖店飞鸽。
 
 > 架构忠实参考 [dxl-commerce-agent](https://github.com/whichmen/dxl-commerce-agent)：意图识别 → 工具查事实 → 风控 → 写操作审批 → 回复。支持真实 DeepSeek LLM 推理 + 规则降级。Web 演示界面在 http://127.0.0.1:18081 。
 
@@ -25,7 +25,7 @@
 3. **多 Agent MVP 版**（`xhs_kefu/mvp/`）：Router → FAQ/商品/售后 三个子 Agent + RAG + 工具。
 
 ```
-小红书千帆(网页版) / Web演示界面
+小红书千帆 / 抖店飞鸽 / Web 演示界面
         │  统一 IncomingMessage
         ▼
 Decision API  POST /v1/decide （去重 + 会话锁 + 短时记忆）
@@ -64,7 +64,7 @@ SQLite（会话 / 决策 / 动作 / 回执）  ← 决策·发送·回执三态�
 参考你给出的多 Agent 架构，实现极简版（端点 `/mvp/decide`）：
 
 ```
-Platform Adapter（千帆真接 + 抖音/千牛占位）
+Platform Adapter（MVP 实验层）
    → Router Agent → FAQ / 商品 / 售后 三个子 Agent
    → RAG（商品资料/FAQ/售后规则，关键词检索）
    → Tool Calling（商品/订单/物流 API）
@@ -95,10 +95,10 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 | 能力 | 说明 |
 |---|---|
 | **审批台** | Web 面板（http://127.0.0.1:18081）实时展示待审队列，点「✅ 通过发送 / ❌ 拒绝」 |
-| **手写回复** | 审批台内直接输入消息，经待发送队列由 Worker 回填到千帆 |
+| **手写回复** | 审批台内直接输入消息，经平台隔离的待发送队列回填到千帆或飞鸽 |
 | **会话接管** | 「🚫 接管」停止自动回复转人工，「✅ 恢复」重新交还 Agent |
 | **浏览器通知** | 有新待办时弹桌面通知（需授权 Notification） |
-| **闭环发送** | 审批通过 → 待发送队列（outbox）→ Worker 轮询回填千帆 → 回执 |
+| **闭环发送** | 审批通过 → 待发送队列（按平台和顾客隔离）→ 对应 Worker 回填 → 回执 |
 
 ### 审批队列 API
 
@@ -109,15 +109,17 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 | `POST /v1/moderation/{id}/reject` | 拒绝 |
 | `POST /v1/handoff` | 接管/恢复会话（`action=take_over/release`） |
 | `POST /v1/outbox` | 手写回复入发送队列 |
-| `GET /v1/outbox/pull` | Worker 拉取待发送内容 |
+| `GET /v1/outbox/pull` | Worker 按 `channel`、`customer_id` 拉取待发送内容 |
+| `POST /platforms/douyin/decide` | 抖店飞鸽桥接层的稳定内部消息入口 |
 | `POST /v1/outbox/{id}/ack` | 确认已发送 |
 
 ## 部署方式（macOS / Windows）
 
-先安装 Python 3.11 或更高版本，并安装、登录「千帆客服工作台」。项目统一使用：
+先安装 Python 3.11 或更高版本；接千帆需安装并登录「千帆客服工作台」，接抖店需安装 Google Chrome 并有抖店商家账号。项目统一使用：
 
 - 管理后台：http://127.0.0.1:18081
 - 千帆专用调试端口：`19222`
+- 抖店飞鸽专用 Chrome 调试端口：`19223`
 - LLM：DeepSeek（密钥不会写进仓库）
 
 | 项目 | macOS | Windows |
@@ -125,9 +127,13 @@ Platform Adapter（千帆真接 + 抖音/千牛占位）
 | 首次安装 | `deploy/macos/install.command` | `deploy\windows\install.bat` |
 | 日常启动 | `deploy/macos/start.command` | `deploy\windows\start.bat` |
 | 停止服务 | `deploy/macos/stop.command` | `deploy\windows\stop.bat` |
+| 启动抖店飞鸽 | `deploy/macos/start-douyin.command` | `deploy\windows\start-douyin.bat` |
+| 停止抖店飞鸽 | `deploy/macos/stop-douyin.command` | `deploy\windows\stop-douyin.bat` |
 | 更换密钥 | `deploy/macos/change-key.command` | `deploy\windows\change-key.bat` |
 | 密钥保存 | macOS 钥匙串 | Windows DPAPI（当前用户加密） |
 | 详细说明 | [macOS 部署文档](docs/deployment-macos.md) | [Windows 部署文档](docs/deployment-windows.md) |
+
+抖店的独立接入步骤、官方开放平台边界和页面校准方式见 [抖店飞鸽接入文档](docs/deployment-douyin.md)。
 
 ### macOS
 
@@ -186,11 +192,17 @@ XHS_CDP_PORT=19222 python run.py desktop   # macOS
 
 Worker 会自动回复普通咨询；退款、赔偿、改址、拦截等高风险操作会进入管理后台的待审队列，不会直接操作真实后台。
 
+手动接入抖店飞鸽时，用独立 Chrome 以 `19223` 调试端口打开抖店商家后台，登录并进入飞鸽会话页，再运行：
+
+```bash
+DOUYIN_CDP_URL=http://127.0.0.1:19223 python run.py douyin
+```
+
 ## 目录结构
 
 ```
 xhs-kefu-demo/
-├── run.py                      # 一键启动 (web/worker/smoke)
+├── run.py                      # 一键启动 (web/desktop/douyin/smoke)
 ├── agent.md                    # 运行时直接加载的完整客服 Agent 规范
 ├── pyproject.toml / .env.example
 ├── deploy/
@@ -209,13 +221,16 @@ xhs-kefu-demo/
 │   ├── storage.py              # SQLite
 │   ├── api.py                  # FastAPI 决策/工具/审批/历史接口
 │   └── web/                    # 千帆模拟器 + Agent 链路可视化面板
-└── workers/qianfan_browser.py  # Playwright 千帆网页版真实收发 Worker
+└── workers/
+    ├── qianfan_cdp_worker.py       # 千帆桌面端真实收发 Worker
+    └── douyin_feige_cdp_worker.py  # 抖店飞鸽网页真实收发 Worker
 ```
 
 ## 说明与免责
 
 - 本 Demo 的订单/物流/商品均为**演示夹具数据**，不接真实 ERP；写操作在"沙箱"中记录动作状态，不真正调用快递/千帆写接口。
-- 千帆网页版是 SPA，DOM 结构与选择器会随版本变化，`workers/qianfan_browser.py` 顶部的 `SELECTORS` 需按当前页面校准；登录态由本地持久化 profile 保存。
+- 千帆和飞鸽页面结构可能随版本变化；飞鸽可运行 `python run.py douyin-dump` 采集有限结构并按接入文档校准选择器，登录态由本地 profile 保存。
+- 抖店官方服务端客服接入需申请相应应用场景和接口权限；本项目的 `/platforms/douyin/decide` 是验签后的内部协议，不是抖店原始回调地址。
 - 接入真实顾客前，请按自己的数据规范配置鉴权、备份、保留期与人工接管流程。
 
 ## 许可证

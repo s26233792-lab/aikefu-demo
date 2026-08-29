@@ -73,6 +73,9 @@ class SQLiteStore:
                     id TEXT PRIMARY KEY,
                     session_key TEXT NOT NULL,
                     customer_id TEXT,
+                    tenant_id TEXT NOT NULL DEFAULT 'demo',
+                    store_id TEXT NOT NULL DEFAULT 'STORE-001',
+                    channel TEXT NOT NULL DEFAULT 'xhs_qianfan_desktop',
                     kind TEXT NOT NULL,         -- reply | action
                     content TEXT NOT NULL,       -- 待审内容（回复文案 或 写操作 payload JSON）
                     intent TEXT,
@@ -93,7 +96,20 @@ class SQLiteStore:
                 )
                 """
             )
-            # 待发送队列：审批台手写/审批通过的回复，由 Worker 回填千帆
+
+        # 兼容已经运行过的数据库：SQLite 的 CREATE TABLE IF NOT EXISTS
+        # 不会给旧表补列，因此在启动时做无损增量迁移。
+        self._ensure_column(
+            "moderation", "tenant_id", "TEXT NOT NULL DEFAULT 'demo'"
+        )
+        self._ensure_column(
+            "moderation", "store_id", "TEXT NOT NULL DEFAULT 'STORE-001'"
+        )
+        self._ensure_column(
+            "moderation", "channel", "TEXT NOT NULL DEFAULT 'xhs_qianfan_desktop'"
+        )
+        # 待发送队列：审批台手写/审批通过的回复，由对应平台 Worker 回填。
+        with self.connection:
             self.connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS outbox (
@@ -106,6 +122,19 @@ class SQLiteStore:
                     created_at TEXT NOT NULL
                 )
                 """
+            )
+
+    def _ensure_column(self, table: str, column: str, declaration: str) -> None:
+        """给受控的内部表补列，不破坏已有数据。"""
+        columns = {
+            row["name"]
+            for row in self.connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column in columns:
+            return
+        with self.connection:
+            self.connection.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"
             )
 
     def recent_turns(self, session_key: str, limit: int = 8) -> list[dict[str, str]]:
@@ -245,13 +274,18 @@ class SQLiteStore:
 
     def add_moderation(
         self, *, id: str, session_key: str, customer_id: str, kind: str,
-        content: str, intent: str | None, reason_code: str, created_at: str
+        content: str, intent: str | None, reason_code: str, created_at: str,
+        tenant_id: str = "demo", store_id: str = "STORE-001",
+        channel: str = "xhs_qianfan_desktop",
     ) -> None:
         with self.connection:
             self.connection.execute(
-                "INSERT INTO moderation(id, session_key, customer_id, kind, content, intent, reason_code, status, created_at) "
-                "VALUES (?,?,?,?,?,?,?, 'pending', ?)",
-                (id, session_key, customer_id, kind, content, intent, reason_code, created_at),
+                "INSERT OR IGNORE INTO moderation(id, session_key, customer_id, tenant_id, store_id, channel, kind, content, intent, reason_code, status, created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?, 'pending', ?)",
+                (
+                    id, session_key, customer_id, tenant_id, store_id, channel,
+                    kind, content, intent, reason_code, created_at,
+                ),
             )
 
     def list_moderation(self, status: str | None = None) -> list[dict]:
@@ -306,10 +340,24 @@ class SQLiteStore:
                 (id, session_key, customer_id, content, channel, created_at),
             )
 
-    def pull_outbox(self, limit: int = 10) -> list[dict]:
+    def pull_outbox(
+        self,
+        limit: int = 10,
+        channel: str | None = None,
+        customer_id: str | None = None,
+    ) -> list[dict]:
+        clauses = ["status = 'queued'"]
+        params: list[Any] = []
+        if channel:
+            clauses.append("channel = ?")
+            params.append(channel)
+        if customer_id:
+            clauses.append("customer_id = ?")
+            params.append(customer_id)
+        params.append(limit)
         rows = self.connection.execute(
-            "SELECT * FROM outbox WHERE status = 'queued' ORDER BY created_at LIMIT ?",
-            (limit,),
+            f"SELECT * FROM outbox WHERE {' AND '.join(clauses)} ORDER BY created_at LIMIT ?",
+            params,
         ).fetchall()
         return [dict(r) for r in rows]
 

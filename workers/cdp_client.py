@@ -22,18 +22,38 @@ CDP_HTTP = os.environ.get(
 ).rstrip("/")
 
 
-def list_targets() -> list[dict]:
-    with urllib.request.urlopen(f"{CDP_HTTP}/json/list", timeout=5) as resp:
+def list_targets(cdp_http: str = CDP_HTTP) -> list[dict]:
+    with urllib.request.urlopen(f"{cdp_http.rstrip('/')}/json/list", timeout=5) as resp:
         return json.load(resp)
+
+
+def find_page(
+    *,
+    cdp_http: str = CDP_HTTP,
+    url_keywords: tuple[str, ...] = (),
+    title_keywords: tuple[str, ...] = (),
+    exclude_keywords: tuple[str, ...] = ("login",),
+    target_types: tuple[str, ...] = ("page",),
+) -> dict | None:
+    """按 URL/标题找到页面，供千帆、抖店等不同平台复用。"""
+    for target in list_targets(cdp_http):
+        if target.get("type") not in target_types:
+            continue
+        url = str(target.get("url", "")).lower()
+        title = str(target.get("title", "")).lower()
+        haystack = f"{url}\n{title}"
+        if any(word.lower() in haystack for word in exclude_keywords):
+            continue
+        if url_keywords and any(word.lower() in url for word in url_keywords):
+            return target
+        if title_keywords and any(word.lower() in title for word in title_keywords):
+            return target
+    return None
 
 
 def find_cstools_page() -> dict | None:
     """找到已登录的客服工作台 page target。"""
-    for t in list_targets():
-        if t.get("type") == "page" and "cstools" in t.get("url", ""):
-            if "login" not in t.get("url", ""):
-                return t
-    return None
+    return find_page(cdp_http=CDP_HTTP, url_keywords=("cstools",))
 
 
 class CdpSession:

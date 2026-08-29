@@ -5,6 +5,7 @@
 - macOS 12 或更高版本，Apple Silicon 与 Intel 均可。
 - Python 3.11 或更高版本。
 - 已安装并登录“千帆客服工作台”。
+- 如需接抖店飞鸽：已安装 Google Chrome，并有可登录的抖店商家账号。
 - 可用的 DeepSeek API Key。
 
 ## 首次安装
@@ -26,6 +27,8 @@ chmod +x deploy/macos/*.command
 - 启动：双击 `deploy/macos/start.command`。
 - 停止：双击 `deploy/macos/stop.command`。
 - 更换 DeepSeek Key：双击 `deploy/macos/change-key.command`。
+- 启动抖店飞鸽：先启动主服务，再双击 `deploy/macos/start-douyin.command`。
+- 停止抖店飞鸽：双击 `deploy/macos/stop-douyin.command`。
 
 启动器会完成以下操作：
 
@@ -52,5 +55,9 @@ XHS_DECISION_URL=http://127.0.0.1:18081 \
 - Worker：`data/macos-worker.log`
 - 健康检查：`curl http://127.0.0.1:18081/health`
 - 千帆配对检查：`curl http://127.0.0.1:19222/json/version`
+- 抖店 Worker：`data/macos-douyin-worker.log`
+- 抖店 Chrome 配对检查：`curl http://127.0.0.1:19223/json/version`
 
 若千帆无法配对，请完全退出千帆后重新运行启动器。不要让其他 Chrome/Electron 程序占用 `19222`。
+
+抖店使用独立 Chrome 登录态和 `19223` 端口，不会占用日常 Chrome 配置。完整步骤和官方接口权限说明见 [抖店飞鸽客服接入](deployment-douyin.md)。

@@ -22,6 +22,7 @@ function Stop-RecordedProcess([string]$PidFile, [string[]]$AllowedFragments) {
 }
 
 Stop-RecordedProcess (Join-Path $DataDir "windows-worker.pid") @("run.py desktop")
+Stop-RecordedProcess (Join-Path $DataDir "windows-douyin-worker.pid") @("run.py douyin")
 Stop-RecordedProcess (Join-Path $DataDir "windows-api.pid") @("run.py web")
 
 $QianfanPidFile = Join-Path $DataDir "windows-qianfan.pid"

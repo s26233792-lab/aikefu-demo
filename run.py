@@ -3,6 +3,8 @@
 用法：
     python run.py web       # 启动决策 API + Web 演示界面 (默认，端口 18081)
     python run.py desktop   # 千帆桌面端(Electron) CDP 真实 Worker（需客户端带调试端口运行）
+    python run.py douyin    # 抖店飞鸽网页 CDP Worker（Chrome 调试端口默认 19223）
+    python run.py douyin-dump # 输出有限 DOM 结构，供飞鸽页面版本校准
     python run.py login     # 千帆网页版扫码登录（旧方案，网页版用）
     python run.py worker    # 千帆网页版浏览器 Worker（旧方案，网页版用）
     python run.py smoke     # 离线冒烟测试（rules 模式，无需 LLM Key）
@@ -42,6 +44,19 @@ def run_desktop() -> None:
     import asyncio
     from workers.qianfan_cdp_worker import main as desktop_main
     asyncio.run(desktop_main())
+
+
+def run_douyin() -> None:
+    """启动抖店飞鸽网页 CDP Worker。"""
+    import asyncio
+    from workers.douyin_feige_cdp_worker import main as douyin_main
+    asyncio.run(douyin_main())
+
+
+def run_douyin_dump() -> None:
+    from workers.douyin_feige_cdp_worker import dump_structure
+    path = dump_structure()
+    print(f"飞鸽页面结构已保存到 {path}")
 
 
 def run_smoke() -> None:
@@ -104,7 +119,11 @@ if __name__ == "__main__":
         run_worker()
     elif mode == "desktop":
         run_desktop()
+    elif mode == "douyin":
+        run_douyin()
+    elif mode == "douyin-dump":
+        run_douyin_dump()
     elif mode == "smoke":
         run_smoke()
     else:
-        print("未知模式，可选: web / login / worker / desktop / smoke")
+        print("未知模式，可选: web / login / worker / desktop / douyin / douyin-dump / smoke")

@@ -90,6 +90,10 @@ def naturalize_customer_reply(reply: str) -> str:
         reply = reply.replace(source, target)
     # 最后的兜底：即使模型偏离提示，也不把内部测试语境暴露给顾客。
     reply = reply.replace("演示", "").replace("模拟", "").replace("**", "").replace("`", "")
+    # 客服聊天框使用纯文本项目符号，清除模型偶尔输出的 Markdown 列表标记。
+    reply = re.sub(r"(?m)^\s*[-*]\s+", "· ", reply)
+    reply = re.sub(r"(?m)^\s*(\d+)\.\s+", r"\1、", reply)
+    reply = re.sub(r"\n{3,}", "\n\n", reply)
     return reply.strip()
 
 

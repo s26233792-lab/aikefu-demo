@@ -6,6 +6,7 @@
 - Python 3.11 或更高版本，安装时勾选 `Add Python to PATH`。
 - Windows PowerShell 5.1 或 PowerShell 7。
 - 已安装并登录“千帆客服工作台”。
+- 如需接抖店飞鸽：已安装 Google Chrome，并有可登录的抖店商家账号。
 - 可用的 DeepSeek API Key。
 
 ## 首次安装
@@ -29,6 +30,8 @@
 - 无路径启动入口：双击 `deploy\windows\启动器.vbs`。
 - 停止：双击 `deploy\windows\stop.bat`。
 - 更换 DeepSeek Key：双击 `deploy\windows\change-key.bat`。
+- 启动抖店飞鸽：先启动主服务，再双击 `deploy\windows\start-douyin.bat`。
+- 停止抖店飞鸽：双击 `deploy\windows\stop-douyin.bat`。
 
 停止脚本只结束 `data` 目录 PID 文件中记录的本项目 API 和 Worker，不会结束电脑上的其他 Python 程序。是否同时退出千帆由用户选择。
 
@@ -54,6 +57,8 @@ $env:XHS_DECISION_URL = "http://127.0.0.1:18081"
 - Worker：`data\windows-worker.log`、`data\windows-worker-error.log`
 - 健康检查：浏览器打开 `http://127.0.0.1:18081/health`
 - 千帆配对检查：浏览器打开 `http://127.0.0.1:19222/json/version`
+- 抖店 Worker：`data\windows-douyin-worker.log`、`data\windows-douyin-worker-error.log`
+- 抖店 Chrome 配对检查：浏览器打开 `http://127.0.0.1:19223/json/version`
 
 常见问题：
 
@@ -61,3 +66,5 @@ $env:XHS_DECISION_URL = "http://127.0.0.1:18081"
 - 找不到千帆：确认已安装桌面版，或把客户端安装到当前用户的 Programs 目录。
 - 配对端口失败：保存输入内容，完全退出千帆后重新运行启动脚本。
 - Key 无法解密：DPAPI 文件只能由创建它的 Windows 用户使用，切换账号后请重新运行 `change-key.bat`。
+
+抖店使用独立 Chrome 登录态和 `19223` 端口。完整步骤和官方接口权限说明见 [抖店飞鸽客服接入](deployment-douyin.md)。

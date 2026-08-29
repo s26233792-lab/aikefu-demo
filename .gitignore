@@ -4,6 +4,7 @@
 
 # ===== 千帆登录态 / 数据（含真实 Cookie，绝不上传）=====
 data/qianfan-profile/
+data/douyin-profile/
 data/dump/
 data/*.db
 data/*.db-*
