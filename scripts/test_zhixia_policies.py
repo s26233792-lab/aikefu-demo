@@ -56,7 +56,11 @@ def main() -> None:
                 "tool_calls": [{"name": "logistics_lookup", "result": logistics}],
             }
 
-    from xhs_kefu.zhixia_runtime import ZhixiaRuntime
+    from xhs_kefu.zhixia_runtime import ZhixiaRuntime, naturalize_customer_reply
+
+    naturalized = naturalize_customer_reply("我可以帮您留意发货情况，有需要随时找我。")
+    assert "我可以帮您留意发货情况" not in naturalized
+    assert "订单页留意发货状态" in naturalized
 
     exception = asyncio.run(
         ZhixiaRuntime(llm_agent=FakeExceptionAgent(), tools=tools).handle(
