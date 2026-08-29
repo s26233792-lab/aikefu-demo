@@ -191,7 +191,7 @@ Worker 会自动回复普通咨询；退款、赔偿、改址、拦截等高风�
 ```
 xhs-kefu-demo/
 ├── run.py                      # 一键启动 (web/worker/smoke)
-├── agent.md                    # 栀夏客服身份、语气与业务规则
+├── agent.md                    # 运行时直接加载的完整客服 Agent 规范
 ├── pyproject.toml / .env.example
 ├── deploy/
 │   ├── macos/                  # macOS 安装/启动/停止/换 Key

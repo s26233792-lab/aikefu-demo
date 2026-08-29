@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+from pathlib import Path
 from typing import Any, Callable
 
 import httpx
@@ -118,9 +120,24 @@ ZHIXIA_TOOL_SCHEMAS: list[dict] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_human_review",
+            "description": "为无法安全自动完成的事项创建人工待办。用于核验失败、数据冲突、质量争议、少件错发、退款补发赔付、物流异常、价保争议、发票修改或规则未覆盖；普通咨询不要调用。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reason": {"type": "string", "description": "需要人工复核的具体原因，不含敏感信息"},
+                    "summary": {"type": "string", "description": "给人工看的简短情况摘要，不复述完整电话、地址等敏感信息"},
+                },
+                "required": ["reason"],
+            },
+        },
+    },
 ]
 
-_BASE_PERSONA = (
+_FALLBACK_PERSONA = (
     "你是女装品牌「栀夏 ZHIXIA」的在线客服「小栀」。品牌面向 22~38 岁女性，"
     "风格为通勤、简约、轻法式，强调好搭配、舒适和实穿。\n"
     "你的工作：根据场合/身材/尺码/预算/偏好推荐商品；回答材质/颜色/版型/库存/优惠/洗护；"
@@ -175,6 +192,21 @@ _BASE_PERSONA = (
     "称呼自然使用「您」，不要把「您好」和「姐妹」叠在一起。"
 )
 
+_DEFAULT_AGENT_RULES_PATH = Path(__file__).resolve().parents[2] / "agent.md"
+
+
+def load_agent_rules(path: str | Path | None = None) -> str:
+    """Load the canonical Agent specification, with a safe packaged fallback."""
+    configured_path = path or os.environ.get("XHS_AGENT_RULES_PATH") or _DEFAULT_AGENT_RULES_PATH
+    try:
+        content = Path(configured_path).expanduser().read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError):
+        return _FALLBACK_PERSONA
+    return content if len(content) >= 1000 else _FALLBACK_PERSONA
+
+
+_BASE_PERSONA = load_agent_rules()
+
 # 新会话首次响应（这是顾客的第一条消息）
 _PERSONA = _BASE_PERSONA + (
     "\n现在是新会话的开始。如果顾客只是打招呼，可简短回复：「您好，我是栀夏女装客服小栀，"
@@ -228,6 +260,20 @@ class ZhixiaLLMAgent:
         """执行 Agent Loop，返回 {reply, tool_calls}。"""
         import asyncio as _asyncio
         messages: list[dict] = [{"role": "system", "content": _PERSONA if is_first_turn else _PERSONA_FOLLOWUP}]
+        has_body_measurement = bool(
+            re.search(r"(?:胸围|腰围|臀围|肩宽)\s*[:：]?\s*\d{2,3}", message_text)
+        )
+        if (
+            any(word in message_text for word in ("尺码", "身高", "体重", "梨形", "苹果形", "肩宽", "腰围", "臀围"))
+            and not has_body_measurement
+        ):
+            messages.append({
+                "role": "system",
+                "content": (
+                    "本轮顾客没有提供可用于确认尺码的胸围、腰围、臀围或肩宽数值。"
+                    "不得输出‘建议S/M/L码’或假设顾客围度；只能说明款式方向、成衣尺码数据，并询问缺少的关键围度。"
+                ),
+            })
         for item in history[-8:]:
             messages.append({"role": item["role"], "content": item["content"][:1500]})
         messages.append({"role": "user", "content": message_text[:2000]})
@@ -248,7 +294,7 @@ class ZhixiaLLMAgent:
             "发货", "催发", "预售", "现货", "拆单", "分包", "合并发", "物流", "快递", "配送",
             "到货", "到哪", "轨迹", "派送", "送达", "签收", "丢件", "运费", "包邮", "偏远", "改地址", "取消", "拦截",
             "退货", "换货", "退款", "七天", "质量", "错发", "少件", "破损", "售后", "优惠",
-            "券", "满减", "折扣", "价保", "补差", "发票", "开票", "客服时间",
+            "券", "满减", "折扣", "价保", "补差", "预算", "实付", "多少钱", "价格", "发票", "开票", "客服时间",
         )
         if order_match and phone_match:
             tool_name = "logistics_lookup" if any(word in message_text for word in logistics_words) else "order_lookup"

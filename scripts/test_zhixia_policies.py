@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 sys.path.insert(0, "src")
 
 from xhs_kefu.zhixia_rules import ZhixiaRuleAgent
+from xhs_kefu.zhixia_agent import load_agent_rules
 from xhs_kefu.zhixia_tools import ZhixiaTools
 
 
@@ -14,8 +16,15 @@ def main() -> None:
     tools = ZhixiaTools()
     agent = ZhixiaRuleAgent(tools)
 
+    agent_rules = load_agent_rules()
+    assert agent_rules == Path("agent.md").read_text(encoding="utf-8").strip()
+    assert "request_human_review" in agent_rules
+    assert "发送前强制自检" in agent_rules
+
     policy = tools.policy_lookup("现货和预售一起下单会拆包吗")
     assert any(section["title"] == "发货与履约" for section in policy["sections"])
+    budget_policy = tools.policy_lookup("预算800，实付多少钱")
+    assert any(section["title"] == "优惠、价保与优惠计算" for section in budget_policy["sections"])
 
     shipping = agent.run("你好，现货一般什么时候发？")
     assert shipping["intent"] == "shipping_policy"
@@ -43,7 +52,7 @@ def main() -> None:
         async def run(self, **_: object) -> dict:
             logistics = tools.logistics_lookup("ZX202608200147", "7319")
             return {
-                "reply": "目前包裹**正在派送**。我建议为您登记催件并提交人工复核。您看需要我帮您处理吗？这种情况我会为您提交人工专员复核，帮您跟进。",
+                "reply": "目前包裹**正在派送**。我建议为您登记催件并提交人工复核。您看需要我帮您处理吗？这种情况我会为您提交人工专员复核，帮您跟进。我也会一并提交给专员核实。",
                 "tool_calls": [{"name": "logistics_lookup", "result": logistics}],
             }
 
@@ -58,7 +67,33 @@ def main() -> None:
     assert "已提交人工专员复核" in exception["reply"]
     assert "需要我帮您处理吗" not in exception["reply"]
     assert "我会为您提交" not in exception["reply"]
+    assert "我也会一并提交" not in exception["reply"]
     assert "**" not in exception["reply"]
+
+    class FakeHumanReviewAgent:
+        async def run(self, **_: object) -> dict:
+            logistics = tools.logistics_lookup("ZX202608200147", "7319")
+            return {
+                "reply": "相关情况需要人工核实，已提交人工专员复核。",
+                "tool_calls": [
+                    {"name": "logistics_lookup", "result": logistics},
+                    {
+                        "name": "request_human_review",
+                        "args": {"reason": "少件争议"},
+                        "result": {"ok": True, "queued": True},
+                    },
+                ],
+            }
+
+    human_review = asyncio.run(
+        ZhixiaRuntime(llm_agent=FakeHumanReviewAgent(), tools=tools).handle(
+            text="收到后发现少了一件"
+        )
+    )
+    assert human_review["needs_human"] is True
+    assert human_review["intent"] == "human_review"
+    assert human_review["handoff_reason"] == "少件争议"
+    assert human_review["send_before_handoff"] is False
 
     print("zhixia policy checks: ok")
 

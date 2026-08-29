@@ -78,6 +78,9 @@ def naturalize_customer_reply(reply: str) -> str:
         "保证当天发出": "优先安排当天出库，以实际进度为准",
         "保证明天发出": "预计明天安排出库，以实际进度为准",
         "保证准时送达": "会尽力按预计时效配送，以实际物流为准",
+        "这个没法给您保证": "到货日期暂时无法保证",
+        "这个无法给您保证": "到货日期暂时无法保证",
+        "核实并安排补发或相应处理": "核实后按结果处理",
     }
     for source, target in fulfillment_replacements.items():
         reply = reply.replace(source, target)
@@ -155,6 +158,13 @@ class ZhixiaRuntime:
                     order_id=args.get("order_id", ""),
                     phone_last4=args.get("phone_last4", ""),
                 )
+            if name == "request_human_review":
+                return {
+                    "ok": True,
+                    "queued": True,
+                    "reason": str(args.get("reason", "需人工复核"))[:200],
+                    "note": "人工待办将在本轮结束后创建",
+                }
             return {"error": f"unknown tool: {name}"}
 
         return execute
@@ -242,6 +252,36 @@ class ZhixiaRuntime:
             call.get("name") in {"modify_address", "cancel_order"}
             for call in tool_calls
         )
+        requested_human_review = any(
+            call.get("name") == "request_human_review"
+            for call in tool_calls
+        )
+        human_review_reason = next(
+            (
+                str(call.get("args", {}).get("reason", "需人工复核"))[:200]
+                for call in tool_calls
+                if call.get("name") == "request_human_review"
+            ),
+            None,
+        )
+        safe_exception_review = (
+            not requested_human_review
+            or any(
+                word in (human_review_reason or "")
+                for word in ("物流", "发货", "未发", "派送", "揽收", "时效", "超时", "72小时")
+            )
+        )
+        lookup_failure = any(
+            call.get("name") in {"order_lookup", "logistics_lookup"}
+            and (
+                call.get("result") is None
+                or (
+                    isinstance(call.get("result"), dict)
+                    and call["result"].get("error") not in {None, "verify_required"}
+                )
+            )
+            for call in tool_calls
+        )
         if logistics_exception or fulfillment_exception:
             # API 随后会创建人工待办，因此异常回执要直接告知已受理，
             # 不能让模型反问“是否需要处理”，导致顾客误以为尚未登记。
@@ -251,21 +291,30 @@ class ZhixiaRuntime:
                 reply,
             )
             reply = re.sub(r"(?:这种情况)?我会为您提交人工专员复核[^。！？]*[。！？]?", "", reply)
+            reply = re.sub(
+                r"[^。！？\n]*(?:我(?:也)?会|我将)[^。！？\n]*(?:提交|登记|持续跟进|一并核实)[^。！？]*[。！？]?",
+                "",
+                reply,
+            )
             reply = re.sub(r"您看(?:是否|需要)[^。！？]*[？?]", "", reply).strip()
             if "已提交人工专员复核" not in reply:
                 reply = reply.rstrip("。 \n") + "。\n\n已提交人工专员复核，预计 2 小时内反馈；23:00 后提交的申请将在次日 10:00 前优先处理。"
         out = check_outbound(reply)
         if high_risk_write:
             intent = "order_change_request"
-        elif logistics_exception:
+        elif logistics_exception and safe_exception_review:
             intent = "logistics_exception"
-        elif fulfillment_exception:
+        elif fulfillment_exception and safe_exception_review:
             intent = "shipping_exception"
+        elif requested_human_review or lookup_failure:
+            intent = "human_review"
         needs_human = (
             fallback_needs_human
             or logistics_exception
             or fulfillment_exception
             or high_risk_write
+            or requested_human_review
+            or lookup_failure
             or not out.ok
         )
         disp = Disposition.REQUIRE_APPROVAL.value if needs_human else Disposition.AUTO_REPLY.value
@@ -281,7 +330,9 @@ class ZhixiaRuntime:
             "send_before_handoff": (
                 (logistics_exception or fulfillment_exception)
                 and not high_risk_write
+                and safe_exception_review
                 and out.ok
             ),
+            "handoff_reason": human_review_reason or ("订单核验失败" if lookup_failure else None),
             "safety": out.to_dict(),
         }
