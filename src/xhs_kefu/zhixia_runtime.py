@@ -83,6 +83,7 @@ def naturalize_customer_reply(reply: str) -> str:
         "保证准时送达": "会尽力按预计时效配送，以实际物流为准",
         "这个没法给您保证": "到货日期暂时无法保证",
         "这个无法给您保证": "到货日期暂时无法保证",
+        "这个我无法保证": "到货日期暂时无法保证",
         "核实并安排补发或相应处理": "核实后按结果处理",
     }
     for source, target in fulfillment_replacements.items():
