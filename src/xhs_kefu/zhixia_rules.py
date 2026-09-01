@@ -28,6 +28,16 @@ class ZhixiaRuleAgent:
         return match.group(1) if match else None
 
     @staticmethod
+    def _sku(text: str) -> str | None:
+        match = re.search(r"\bZX-[A-Z]\d{3}\b", text.upper())
+        return match.group(0) if match else None
+
+    @staticmethod
+    def _quantity(text: str) -> int:
+        match = re.search(r"([1-9]\d?)\s*(?:件|个)", text)
+        return int(match.group(1)) if match else 1
+
+    @staticmethod
     def _tool_call(name: str, args: dict[str, Any], result: Any) -> dict[str, Any]:
         return {"name": name, "status": "ok", "latency_ms": 0, "args": args, "result": result}
 
@@ -42,10 +52,11 @@ class ZhixiaRuleAgent:
         result = self.tools.policy_lookup(topic)
         return result, self._tool_call("shop_policy_lookup", {"topic": topic}, result)
 
-    def run(self, text: str) -> dict[str, Any]:
+    def run(self, text: str, *, is_first_turn: bool = True) -> dict[str, Any]:
         normalized = text.replace(" ", "")
         order_id = self._order_id(text)
         phone_last4 = self._phone_last4(text)
+        sku = self._sku(text)
         tool_calls: list[dict[str, Any]] = []
 
         service_words = (
@@ -58,7 +69,86 @@ class ZhixiaRuleAgent:
         ):
             return self._result(
                 "chitchat",
-                "您好，我是栀夏女装客服小栀。请问想了解商品、尺码，还是订单售后呢？",
+                (
+                    "您好，我是栀夏女装客服小栀。请问想了解商品、尺码，还是订单售后呢？"
+                    if is_first_turn
+                    else "您好，在的。请问想了解商品、尺码，还是订单售后呢？"
+                ),
+            )
+
+        if sku and any(word in text for word in ("下单", "怎么买", "购买", "立即购买", "拍下")):
+            products = self.tools.product_lookup(sku)
+            tool_calls.append(self._tool_call("product_lookup", {"sku": sku}, products))
+            if not products:
+                return self._result("place_order", "暂未查到该商品，请核对 SKU 后重新发送。", tool_calls)
+            product = products[0]
+            color = next((item for item in product.get("colors", []) if item in text), None)
+            size_match = re.search(r"\b(S|M|L|XL)\s*码?\b", text.upper())
+            size = size_match.group(1) if size_match else None
+            missing = [label for value, label in ((color, "颜色"), (size, "尺码")) if not value]
+            if missing:
+                return self._result(
+                    "place_order_clarify",
+                    f"可以下单这款{product['name']}。还请确认{'和'.join(missing)}，数量如不是 1 件也请一起告诉我，我再帮您核对库存和价格。",
+                    tool_calls,
+                )
+            quantity = self._quantity(text)
+            stock = int(product.get("stock", {}).get(color, {}).get(size, 0))
+            if stock < quantity:
+                return self._result(
+                    "place_order_out_of_stock",
+                    f"{product['name']}的{color}{size}码当前库存不足 {quantity} 件。可以换同款其他有货颜色/尺码，或告诉我您的偏好，我再推荐替代款。",
+                    tool_calls,
+                )
+            return self._result(
+                "place_order",
+                f"已核对：{product['name']}，{color}，{size}码，{quantity}件，单价{self._money(product['price_cents'])}。当前查询库存可满足，最终以付款成功时占用结果为准；请在当前平台商品页选择对应规格并核对结算页后提交订单。",
+                tool_calls,
+            )
+
+        if sku and any(word in text for word in ("参数", "规格", "材质", "面料", "版型", "价格", "库存", "颜色", "尺码", "洗护", "介绍")):
+            products = self.tools.product_lookup(sku)
+            tool_calls.append(self._tool_call("product_lookup", {"sku": sku}, products))
+            if not products:
+                return self._result("product_question", "暂未查到该商品资料，请核对 SKU 后重新发送。", tool_calls)
+            product = products[0]
+            details: list[str] = []
+            if any(word in text for word in ("材质", "面料", "参数", "规格", "介绍")):
+                details.append(f"面料：{product.get('fabric', '暂无资料')}")
+            if any(word in text for word in ("版型", "参数", "规格", "介绍")):
+                details.append(f"版型：{product.get('fit', '暂无资料')}")
+            if any(word in text for word in ("价格", "多少钱", "参数", "规格", "介绍")):
+                details.append(f"价格：{self._money(product['price_cents'])}")
+            if any(word in text for word in ("颜色", "参数", "规格", "介绍")):
+                details.append("颜色：" + "、".join(product.get("colors", [])))
+            if any(word in text for word in ("尺码", "参数", "规格", "介绍")):
+                details.append("尺码：" + "、".join(product.get("sizes", [])))
+            if "洗护" in text:
+                details.append(f"洗护：{product.get('care', '暂无资料')}")
+            if "库存" in text:
+                details.append("库存需按颜色和尺码核对，请告诉我想要的颜色与尺码")
+            tip = product.get("tips")
+            if tip:
+                details.append(f"购买提示：{tip}")
+            return self._result("product_question", f"{product['name']}（{sku}）：" + "；".join(details) + "。", tool_calls)
+
+        if any(word in text for word in ("活动", "优惠券", "满减", "折扣什么时候", "参加优惠")):
+            policy, policy_call = self._policy_call(text)
+            tool_calls.append(policy_call)
+            active = [item for item in policy.get("campaigns", []) if item.get("status") == "active"]
+            if not active:
+                upcoming = [item for item in policy.get("campaigns", []) if item.get("status") == "upcoming"]
+                if upcoming:
+                    campaign = upcoming[0]
+                    return self._result("campaign_upcoming", f"{campaign['name']}尚未开始，活动时间为 {campaign['start_at'][:10]} 至 {campaign['end_at'][:10]}。具体范围和优惠以活动开始后的结算页为准。", tool_calls)
+                return self._result("campaign_inactive", "当前暂无生效中的店铺活动，历史活动已经结束；商品价格和可用优惠请以结算页为准。", tool_calls)
+            campaign = active[0]
+            eligible_products = [self.tools.product_lookup(item)[0]["name"] for item in campaign.get("eligible_skus", []) if self.tools.product_lookup(item)]
+            offer_labels = "；".join(item.get("label", "") for item in campaign.get("offers", []) if item.get("label"))
+            return self._result(
+                "campaign_active",
+                f"当前生效的是“{campaign['name']}”，时间为 {campaign['start_at'][:10]} 至 {campaign['end_at'][:10]}。适用商品：{'、'.join(eligible_products)}；优惠：{offer_labels}。{campaign.get('stacking', '')}最终以结算页为准。",
+                tool_calls,
             )
 
         if ("西装" in text and "阔腿裤" in text) and any(word in text for word in ("多少钱", "满减", "95折", "优惠")):
@@ -67,12 +157,39 @@ class ZhixiaRuleAgent:
             tool_calls.append(self._tool_call("product_lookup", {"sku": "ZX-J407"}, [jacket]))
             tool_calls.append(self._tool_call("product_lookup", {"sku": "ZX-S208"}, [trousers]))
             subtotal = jacket["price_cents"] + trousers["price_cents"]
-            discounted = round(subtotal * 0.95)
-            payable = discounted - 6000
+            policy, policy_call = self._policy_call(text)
+            tool_calls.append(policy_call)
+            campaign = next(
+                (
+                    item for item in policy.get("campaigns", [])
+                    if item.get("status") == "active"
+                    and {"ZX-J407", "ZX-S208"}.issubset(set(item.get("eligible_skus", [])))
+                ),
+                None,
+            )
+            if not campaign:
+                return self._result(
+                    "promotion_calculation",
+                    f"短款西装 {self._money(jacket['price_cents'])} + 阔腿裤 {self._money(trousers['price_cents'])}，商品小计 {self._money(subtotal)}。当前未查到两件可共同使用的生效活动，最终优惠和实付以结算页为准。",
+                    tool_calls,
+                )
+            rate = next(
+                (float(item.get("discount_rate", 1)) for item in campaign.get("offers", []) if item.get("type") == "multi_buy_discount"),
+                1.0,
+            )
+            discounted = round(subtotal * rate)
+            coupons = [
+                item for item in campaign.get("offers", [])
+                if item.get("type") == "store_coupon"
+                and discounted >= int(item.get("threshold_cents", 0))
+            ]
+            best_coupon = max(coupons, key=lambda item: int(item.get("discount_cents", 0)), default={})
+            coupon_cents = int(best_coupon.get("discount_cents", 0))
+            payable = discounted - coupon_cents
             reply = (
                 f"短款西装 {self._money(jacket['price_cents'])} + 阔腿裤 {self._money(trousers['price_cents'])}，"
-                f"原价共 {self._money(subtotal)}。两件 95 折后是 {self._money(discounted)}，"
-                f"再用满 ¥499 减 ¥60 店铺券，预计实付 {self._money(payable)}；若有积分，还可按规则继续抵扣。"
+                f"原价共 {self._money(subtotal)}。按当前“{campaign['name']}”两件折扣后是 {self._money(discounted)}，"
+                f"再用{best_coupon.get('label', '符合门槛的店铺券')}，预计实付 {self._money(payable)}；若有积分，还可按规则继续抵扣，最终以结算页为准。"
             )
             return self._result("promotion_calculation", reply, tool_calls)
 
@@ -107,6 +224,43 @@ class ZhixiaRuleAgent:
             )
             return self._result("product_question", reply, tool_calls)
 
+        if order_id and phone_last4 and "备注" in text:
+            note = re.sub(r"^.*?备注\s*[:：]?", "", text).strip(" ，,。")
+            confirmed = any(word in text for word in ("确认写入", "确认备注", "确认提交", "就按这个"))
+            for marker in ("确认写入", "确认备注", "确认提交", "就按这个"):
+                note = note.replace(marker, "").strip(" ，,。")
+            if not note:
+                return self._result("order_note_collect", "请告诉我需要记录的订单备注，建议控制在 80 字以内，不要包含完整手机号、详细地址或验证码。")
+            if not confirmed:
+                return self._result("order_note_confirm", f"准备写入的备注是“{note}”。确认将这段内容写入订单备注吗？")
+            result = self.tools.add_order_note(order_id, phone_last4, note, confirmed=True)
+            tool_calls.append(self._tool_call("add_order_note", {"order_id": order_id, "phone_last4": phone_last4, "note": note, "confirmed": True}, result))
+            if not result.get("ok"):
+                return self._result("order_note_failed", "备注暂未写入，请核对订单信息和备注内容后重试。", tool_calls)
+            return self._result("order_note_written", f"订单备注已记录：“{result['note_summary']}”。备注会供客服和仓库参考，但不代表配送时间或其他要求一定能够满足。", tool_calls)
+
+        if order_id and any(word in text for word in ("核对订单", "订单明细", "核对一下", "商品数量", "订单金额", "地址摘要", "待付款")):
+            if not phone_last4:
+                return self._result("order_summary", f"可以帮您核对订单 {order_id}，还请提供收货手机号后四位。")
+            result = self.tools.order_lookup(order_id, phone_last4)
+            tool_calls.append(self._tool_call("order_lookup", {"order_id": order_id, "phone_last4": phone_last4}, result))
+            if not result or result.get("error"):
+                return self._result("order_verification_retry", "订单信息未核验通过，请核对订单号和收货手机号后四位后重新发送。", tool_calls)
+            lines = []
+            for item in result.get("items", []):
+                lines.append(f"{item.get('name', item.get('sku', '商品'))}，{item.get('color', '')}{item.get('size', '')}码，{item.get('quantity', 1)}件")
+            amount_cents = int(result.get("paid_cents") or result.get("amount_due_cents") or 0)
+            amount_label = "待付" if "待付款" in str(result.get("status", "")) else "实付"
+            reply = (
+                f"订单 {order_id} 核对如下：商品：{'；'.join(lines)}；{amount_label}金额：{self._money(amount_cents)}；"
+                f"地址摘要：{result.get('address_masked', '暂无')}；状态：{result.get('status', '暂无')}。"
+            )
+            if result.get("discount_note"):
+                reply += f"优惠摘要：{result['discount_note']}。"
+            if "待付款" in str(result.get("status", "")) and result.get("payment_deadline"):
+                reply += f"支付截止时间为 {result['payment_deadline'].replace('T', ' ')[:16]}，请在平台订单页完成支付。"
+            return self._result("order_summary", reply, tool_calls)
+
         if order_id and any(word in text for word in ("物流", "快递", "到哪", "发货")):
             if not phone_last4:
                 return self._result("logistics_status", f"可以帮您查订单 {order_id}，还请提供收货手机号后四位用于核验。")
@@ -115,9 +269,9 @@ class ZhixiaRuleAgent:
             policy, policy_call = self._policy_call(text)
             tool_calls.append(policy_call)
             if not result:
-                return self._result("logistics_status", "暂未查询到该订单，已提交人工复核。", tool_calls, needs_human=True)
+                return self._result("order_verification_retry", "暂未查询到该订单，请核对订单号和收货手机号后四位后重新发送。", tool_calls)
             if result.get("error"):
-                return self._result("logistics_status", "手机号后四位与订单信息不匹配，已提交人工复核。", tool_calls, needs_human=True)
+                return self._result("order_verification_retry", "订单信息未核验通过，请核对订单号和收货手机号后四位后重新发送。", tool_calls)
             reply = f"订单 {order_id} 当前状态为「{result['status']}」，{result['eta']}。"
             if result.get("trace"):
                 latest = result["trace"][-1]
@@ -156,7 +310,7 @@ class ZhixiaRuleAgent:
             result = self.tools.order_lookup(order_id, phone_last4)
             tool_calls.append(self._tool_call("order_lookup", {"order_id": order_id, "phone_last4": phone_last4}, result))
             if not result or result.get("error"):
-                return self._result("order_lookup", "订单信息核验失败，已提交人工复核。", tool_calls, needs_human=True)
+                return self._result("order_verification_retry", "订单信息未核验通过，请核对订单号和收货手机号后四位后重新发送。", tool_calls)
             reply = f"订单 {order_id} 当前状态为「{result['status']}」。"
             if result.get("aftersale_eta"):
                 reply += result["aftersale_eta"] + "。"

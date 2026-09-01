@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -123,8 +124,25 @@ ZHIXIA_TOOL_SCHEMAS: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "add_order_note",
+            "description": "把已由顾客明确确认的非敏感短备注写入已核验订单。待付款和待发货订单均可记录普通备注；未取得明确确认时禁止调用；备注不等于仓库履约保证。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "order_id": {"type": "string", "description": "已核验订单号"},
+                    "phone_last4": {"type": "string", "description": "收货手机号后四位"},
+                    "note": {"type": "string", "description": "顾客确认过的备注摘要，80字以内且不含敏感信息"},
+                    "confirmed": {"type": "boolean", "description": "只有顾客明确确认本条备注时才能为 true"},
+                },
+                "required": ["order_id", "phone_last4", "note", "confirmed"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "request_human_review",
-            "description": "为无法安全自动完成的事项创建人工待办。用于核验失败、数据冲突、质量争议、少件错发、退款补发赔付、物流异常、价保争议、发票修改或规则未覆盖；普通咨询不要调用。",
+            "description": "为无法安全自动完成的事项创建人工待办。用于系统查询异常、数据冲突、质量争议、少件错发、退款补发赔付、物流异常、价保争议、发票修改或规则未覆盖；订单号查不到或手机号后四位不匹配时先请顾客核对，不要调用。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -153,7 +171,8 @@ _FALLBACK_PERSONA = (
     "4. 尺码建议只能作参考，结合身高/体重/胸围/腰围/臀围/肩宽/偏好/版型判断；"
     "信息不足先询问，不能保证百分百合身。\n"
     "5. 不虚构商品/库存/优惠/订单状态/物流/售后结果；找不到数据时说「暂未查询到相关信息」。\n"
-    "6. 查询订单至少核验「订单号 + 收货手机号后四位」；不展示完整手机号/完整地址等敏感信息。\n"
+    "6. 查询订单至少核验「订单号 + 收货手机号后四位」；不展示完整手机号/完整地址等敏感信息。"
+    "订单号查不到或后四位不匹配时，只请顾客核对后重新提供，不转人工；仅系统异常或数据冲突才转人工。\n"
     "7. 未发货订单可申请改地址或取消（回复「已为您提交申请」，不承诺一定成功）；"
     "已发货订单不能直接改地址，可建议联系承运方或申请拦截。\n"
     "8. 不贬低顾客身材/年龄/审美；避免「显胖」「腿粗」等，用「更修饰线条」「包容度更高」等说法。\n"
@@ -189,7 +208,13 @@ _FALLBACK_PERSONA = (
     "26. 描述尚未发生的出库、发货、物流更新、派送或到账时间时，必须使用「通常」「预计」"
     "「优先安排」「以实际为准」等非保证性措辞；禁止说「一定」「保证」「肯定」「会在某时发出/到达」。\n"
     "27. 回复使用适合客服聊天框的纯文本，不使用 Markdown 加粗、标题、代码块；"
-    "称呼自然使用「您」，不要把「您好」和「姐妹」叠在一起。"
+    "称呼自然使用「您」，不要把「您好」和「姐妹」叠在一起。\n"
+    "28. 引导下单前确认商品、颜色、尺码和数量，再查库存、价格、预售和活动；不替顾客默认规格。\n"
+    "29. 核对订单时说明商品、颜色、尺码、数量、实付或待付金额、脱敏地址摘要和状态。\n"
+    "30. 待付款提醒只针对工具确认仍待付款且频控允许的订单；相邻至少120分钟、24小时最多2次。\n"
+    "31. 订单备注先复述摘要并取得明确确认，再调用 add_order_note；备注不代表履约保证。\n"
+    "32. 活动必须读取 queried_at 与 campaigns.status，只宣传 active 活动并核对时间、范围、门槛和叠加规则。\n"
+    "33. 不发送未知购买链接，不替顾客下单或付款，不索取验证码或支付密码，不引导私下转账。"
 )
 
 _DEFAULT_AGENT_RULES_PATH = Path(__file__).resolve().parents[2] / "agent.md"
@@ -217,8 +242,23 @@ _PERSONA = _BASE_PERSONA + (
 # 后续消息（非首次）：不要自我介绍，直接回答问题
 _PERSONA_FOLLOWUP = _BASE_PERSONA + (
     "\n这不是新会话，前面已有对话。不要再说「我是小栀」这类自我介绍，"
-    "直接针对顾客当前这条消息回答问题。"
+    "直接针对顾客当前这条消息回答问题。顾客问「你是谁」时，只说「我是店铺客服」，"
+    "继续询问或解决商品、订单与售后问题，不主动报品牌名或客服名。"
 )
+
+
+_INTERNAL_ANALYSIS_RE = re.compile(
+    r"^\s*(?:(?:这位)?(?:顾客|用户)(?:提到|反映|询问|表示|说|想要|需要)|"
+    r"根据(?:顾客|用户)(?:描述|反馈)|对于(?:这位)?(?:顾客|用户)|"
+    r"(?:分析|判断|处理思路|回复思路|意图)\s*[:：]|"
+    r"我(?:需要|应该|要先)(?:先)?(?:查询|确认|核实|请顾客)|"
+    r"我需要(?:订单|商品|物流|会员|更多|相关)信息.{0,30}(?:核实|查询|确认))"
+)
+
+
+def looks_like_internal_analysis(text: str) -> bool:
+    """识别误输出给顾客的第三人称分析/工作笔记。"""
+    return bool(_INTERNAL_ANALYSIS_RE.search(text.strip()))
 
 
 
@@ -260,6 +300,26 @@ class ZhixiaLLMAgent:
         """执行 Agent Loop，返回 {reply, tool_calls}。"""
         import asyncio as _asyncio
         messages: list[dict] = [{"role": "system", "content": _PERSONA if is_first_turn else _PERSONA_FOLLOWUP}]
+        messages.append({
+            "role": "system",
+            "content": f"当前本地时间：{datetime.now().astimezone().isoformat(timespec='minutes')}。活动时间、付款时限和时效判断必须以此时间及工具返回的 queried_at 为准。",
+        })
+        messages.append({
+            "role": "system",
+            "content": (
+                "你正在直接回复顾客。只输出顾客能看到的成品回复，直接用第二人称交流；"
+                "禁止写‘顾客提到、用户反映、我需要查询、处理思路、根据规则’等内部分析或第三人称总结。"
+                "简单问题用1～3句自然口语回答，不机械复述问题，不每次都以‘您好’开头。"
+            ),
+        })
+        if not history:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "本轮没有可用的相关历史，必须把当前消息当作独立新问题。"
+                    "不得猜测、引用或复述上一话题的商品、订单、物流、会员、活动或售后内容。"
+                ),
+            })
         has_body_measurement = bool(
             re.search(r"(?:胸围|腰围|臀围|肩宽)\s*[:：]?\s*\d{2,3}", message_text)
         )
@@ -288,6 +348,7 @@ class ZhixiaLLMAgent:
         product_words = (
             "商品", "推荐", "有哪些", "有哪", "上班穿", "通勤", "面试", "约会", "穿搭",
             "衬衫", "西装", "裙", "裤", "开衫", "背心", "尺码", "面料", "库存", "价格",
+            "规格", "SKU", "材质", "版型", "洗护", "下单", "购买", "怎么买", "立即购买",
         )
         logistics_words = ("物流", "快递", "到哪", "几天到", "轨迹", "派送")
         policy_words = (
@@ -295,6 +356,7 @@ class ZhixiaLLMAgent:
             "到货", "到哪", "轨迹", "派送", "送达", "签收", "丢件", "运费", "包邮", "偏远", "改地址", "取消", "拦截",
             "退货", "换货", "退款", "七天", "质量", "错发", "少件", "破损", "售后", "优惠",
             "券", "满减", "折扣", "价保", "补差", "预算", "实付", "多少钱", "价格", "发票", "开票", "客服时间",
+            "活动", "下单", "购买", "待付款", "付款", "催付", "核对订单", "订单明细", "备注",
         )
         if order_match and phone_match:
             tool_name = "logistics_lookup" if any(word in message_text for word in logistics_words) else "order_lookup"
@@ -331,6 +393,7 @@ class ZhixiaLLMAgent:
             messages.append({"role": "assistant", "content": None, "tool_calls": prefetched_calls})
             messages.extend(prefetched_results)
 
+        rewrite_attempted = False
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             for _ in range(6):
                 payload: dict[str, Any] = {
@@ -366,6 +429,18 @@ class ZhixiaLLMAgent:
                         })
                     continue
 
-                return {"reply": (msg.get("content") or "").strip(), "tool_calls": tool_calls_log}
+                content = (msg.get("content") or "").strip()
+                if content and looks_like_internal_analysis(content) and not rewrite_attempted:
+                    rewrite_attempted = True
+                    messages.append({"role": "assistant", "content": content})
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "上一条是内部分析，不能发送。请立即重写为顾客可见回复："
+                            "直接回应对方，语气自然、有温度，只给结论和下一步，不描述你的分析过程。"
+                        ),
+                    })
+                    continue
+                return {"reply": content, "tool_calls": tool_calls_log}
 
         return {"reply": "抱歉，我还在为您核实，请稍后再试。", "tool_calls": tool_calls_log}

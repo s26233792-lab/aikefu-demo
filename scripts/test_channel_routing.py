@@ -103,6 +103,18 @@ def test_approval_keeps_origin_platform(tmp: Path) -> None:
             "/v1/handoff",
             json={"session_key": session_key, "action": "release"},
         )
+        greeting = client.post(
+            "/platforms/douyin/decide",
+            json={
+                "text": "在吗",
+                "customer_id": "buyer-greeting",
+                "message_id": "greeting-1",
+            },
+        ).json()
+        assert greeting["status"] == "resolved"
+        assert greeting["needs_approval"] is False
+        assert "我是" not in greeting["reply"]
+        assert "请问" in greeting["reply"]
     assert [row["content"] for row in douyin] == ["已为您登记处理。"]
     assert qianfan == []
 

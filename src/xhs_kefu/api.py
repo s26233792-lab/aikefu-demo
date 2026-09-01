@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -47,6 +48,8 @@ class ZhixiaRequest(BaseModel):
     channel: str = "xhs_qianfan_desktop"
     customer_id: str | None = None
     message_id: str | None = None
+    # 外部客服工作台通常已有平台欢迎语或人工接入语，不应再次自我介绍。
+    suppress_intro: bool = False
 
 
 class DouyinBridgeRequest(BaseModel):
@@ -61,6 +64,7 @@ class DouyinBridgeRequest(BaseModel):
     message_id: str | None = None
     tenant_id: str = "demo"
     store_id: str = "STORE-001"
+    suppress_intro: bool = True
 
 
 class FeedbackCreateRequest(BaseModel):
@@ -141,12 +145,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # 栀夏 ZHIXIA 女装客服 Agent（agent.md 规格）
     from .zhixia_agent import ZhixiaLLMAgent
     from .zhixia_runtime import ZhixiaRuntime
+    from .zhixia_tools import ZhixiaTools
     zhixia_llm = None
     if settings.llm_api_key:
         zhixia_llm = ZhixiaLLMAgent(
             base_url=settings.llm_base_url, model=settings.llm_model, api_key=settings.llm_api_key,
         )
-    zhixia_runtime = ZhixiaRuntime(llm_agent=zhixia_llm)
+    zhixia_runtime = ZhixiaRuntime(llm_agent=zhixia_llm, tools=ZhixiaTools(store=store))
 
     def _record_feedback(
         *,
@@ -218,19 +223,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 taken_over["feedback_id"] = feedback_id
             return taken_over
         history = store.recent_turns(session_key, 8)
-        result = await zhixia_runtime.handle(text=req.text, history=history)
-        # 持久化会话
-        now = datetime.now(timezone.utc).isoformat()
-        store.save_turn(
-            dedupe_key=f"{session_key}|{hashlib.sha1(req.text.encode()).hexdigest()[:12]}",
-            session_key=session_key, role="user", content=req.text, created_at=now,
+        result = await zhixia_runtime.handle(
+            text=req.text,
+            history=history,
+            suppress_intro=req.suppress_intro,
         )
-        if result.get("reply"):
-            store.save_turn(
-                dedupe_key=f"{session_key}|r{hashlib.sha1(req.text.encode()).hexdigest()[:12]}",
-                session_key=session_key, role="assistant", content=result["reply"], created_at=now,
-            )
-        # 对齐 Worker 期望的兼容字段（status / needs_approval）
+        # 对齐 Worker 期望的兼容字段（status / needs_approval）。先确定这条回复
+        # 是否真的会发给顾客，未发送的待审草稿不能混入后续对话记忆。
         disposition = result.get("disposition", "auto_reply")
         if disposition == "handoff_human":
             status = "taken_over"
@@ -241,6 +240,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             status = "resolved"
             needs_approval = False
+
+        # 持久化会话。消息 ID 才是一次事件的身份；用文本哈希会让顾客重复
+        # 发送“好的/确认”时覆盖上一轮，破坏真实时序。
+        now = datetime.now(timezone.utc).isoformat()
+        event_id = req.message_id or f"local-{uuid.uuid4().hex}"
+        event_key = f"{session_key}|{event_id}"
+        store.save_turn(
+            dedupe_key=f"{event_key}|user",
+            session_key=session_key, role="user", content=req.text, created_at=now,
+        )
+        reply_will_be_sent = bool(
+            result.get("reply")
+            and (not needs_approval or result.get("send_before_handoff"))
+        )
+        if reply_will_be_sent:
+            store.save_turn(
+                dedupe_key=f"{event_key}|assistant",
+                session_key=session_key, role="assistant", content=result["reply"], created_at=now,
+            )
         # 需人工/待审批时，入审批队列（供审批台 + Worker 弹提醒）
         mod_id = None
         if needs_approval:
@@ -287,6 +305,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 tenant_id=req.tenant_id,
                 store_id=req.store_id,
                 channel="douyin_feige",
+                suppress_intro=req.suppress_intro,
             ),
             x_api_key,
         )

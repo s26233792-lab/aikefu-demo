@@ -80,6 +80,8 @@ def _is_customer_message(text: str) -> bool:
     for prefix in prefixes:
         if t.startswith(prefix):
             return False
+    if "接入会话" in t or "会话已结束" in t:
+        return False
     # 排除纯状态
     if t in ("已读", "发送", STORE_NAME, ""):
         return False
@@ -121,6 +123,8 @@ class QianfanCdpWorker:
             "tenant_id": self.tenant_id,
             "channel": self.channel,
             "message_id": message_id,
+            # 千帆页面已有会话上下文，避免 Agent 把接入后的第一条消息当新客自我介绍。
+            "suppress_intro": True,
         }
         headers = {"Content-Type": "application/json"}
         if self.api_key:
@@ -160,8 +164,11 @@ class QianfanCdpWorker:
                 if baseline:
                     obj = json.loads(baseline)
                     if obj and obj.get("hash"):
-                        self.seen.add(obj["hash"])
-                        print("[cdp-worker] 已记录当前会话基线消息，仅响应后续新消息。")
+                        if session.evaluate(_CURRENT_CONVERSATION_PENDING_JS):
+                            print("[cdp-worker] 当前会话明确待回复，将处理最后一条顾客消息。")
+                        else:
+                            self.seen.add(obj["hash"])
+                            print("[cdp-worker] 已记录当前会话基线消息，仅响应后续新消息。")
                 print(f"[cdp-worker] 开始轮询新顾客消息（每 {self.poll_interval}s）...")
 
                 while self._running:
@@ -224,7 +231,9 @@ class QianfanCdpWorker:
             content = item.get("content", "")
             if not content:
                 continue
-            await self._send(session, content)
+            sent = await self._send(session, content, expected_customer=customer_id)
+            if not sent:
+                continue
             print(f"[cdp-worker] 已回填人工回复到千帆: {content[:40]}...")
             # 标记已发送
             oid = item["id"]
@@ -256,6 +265,9 @@ class QianfanCdpWorker:
         print(f"[cdp-worker v2] 检测到新顾客消息: {text[:40]}")
 
         customer_id = contact or "unknown"
+        if customer_id == "unknown":
+            _log_once("[cdp-worker] 当前顾客身份无法确认，已停止发送。", "customer_unknown")
+            return
         decision = await self.decide(text, customer_id, fingerprint)
         if not decision:
             return
@@ -271,8 +283,13 @@ class QianfanCdpWorker:
             # 发货/物流超时有明确事实时，先把状态和已建人工工单的回执发给顾客，
             # 后续处理仍由人工队列接管；其他待审内容保持不自动发送。
             if decision.get("send_before_handoff") and reply:
-                await self._send(session, reply)
-                print(f"[cdp-worker v2] 已发送异常受理回执: {reply[:40]}...")
+                if await self._send(
+                    session,
+                    reply,
+                    expected_customer=customer_id,
+                    expected_fingerprint=fingerprint,
+                ):
+                    print(f"[cdp-worker v2] 已发送异常受理回执: {reply[:40]}...")
             print(f"[cdp-worker v2] 回复需人工审批，已入待审队列（{decision.get('moderation_id', '?')}）: {reply[:40]}...")
             await self._notify_in_qianfan(session, f"⚠️ 需人工审批：{reply[:40]}")
             system_notify("warning")  # 置顶 + 闪烁 + 声音
@@ -280,8 +297,13 @@ class QianfanCdpWorker:
         if not reply:
             print("[cdp-worker v2] 无可直接发送的回复，跳过。")
             return
-        await self._send(session, reply)
-        print(f"[cdp-worker v2] 已发送回复: {reply[:40]}...")
+        if await self._send(
+            session,
+            reply,
+            expected_customer=customer_id,
+            expected_fingerprint=fingerprint,
+        ):
+            print(f"[cdp-worker v2] 已发送回复: {reply[:40]}...")
 
     async def _notify_in_qianfan(self, session: CdpSession, message: str) -> None:
         """在真实千帆窗口内注入醒目浮层提醒（不破坏千帆 DOM，可自动消失）。"""
@@ -318,21 +340,38 @@ class QianfanCdpWorker:
         except Exception as e:  # noqa: BLE001
             print(f"[cdp-worker] 千帆弹提醒失败（非致命）: {type(e).__name__}")
 
-    async def _send(self, session: CdpSession, reply: str) -> None:
+    async def _send(
+        self,
+        session: CdpSession,
+        reply: str,
+        *,
+        expected_customer: str | None = None,
+        expected_fingerprint: str | None = None,
+    ) -> bool:
         """把回复填入 textarea.reply-textarea 并触发发送。"""
         reply = reply.strip()
         if not reply:
             print("[cdp-worker] 回复为空，跳过发送。")
-            return
-        # 记录自己将发送的内容，用于后续过滤"复读"
-        self.sent_texts.add(reply)
+            return False
+        if expected_customer and session.evaluate(_CURRENT_CUSTOMER_JS) != expected_customer:
+            print("[cdp-worker] 会话已切换，已停止发送，等待重新处理。")
+            return False
+        if expected_fingerprint:
+            latest = session.evaluate(_LAST_CUSTOMER_JS)
+            if not latest or latest.get("hash") != expected_fingerprint:
+                print("[cdp-worker] 顾客又发了新消息，已停止发送旧回复。")
+                return False
         # 填入文本（textarea 用 value + input 事件触发框架响应）
         ok = session.evaluate(
             _FILL_JS.replace("__REPLY__", json.dumps(reply, ensure_ascii=False))
         )
         if not ok:
             print("[cdp-worker] 填入输入框失败，跳过发送。")
-            return
+            return False
+        if expected_customer and session.evaluate(_CURRENT_CUSTOMER_JS) != expected_customer:
+            session.evaluate("(() => { const ta=document.querySelector('textarea.reply-textarea'); if(ta){ta.value='';ta.dispatchEvent(new Event('input',{bubbles:true}));} return true; })()")
+            print("[cdp-worker] 填入后会话发生切换，已清空输入并停止发送。")
+            return False
         # 点击发送按钮（非 disabled）
         clicked = session.evaluate(_CLICK_SEND_JS)
         if not clicked:
@@ -342,6 +381,8 @@ class QianfanCdpWorker:
                 "if(!ta) return false; ta.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); return true; })()"
             )
             print("[cdp-worker] 已用回车兜底发送。")
+        self.sent_texts.add(reply)
+        return True
 
     def stop(self) -> None:
         self._running = False
@@ -358,6 +399,17 @@ _LAST_CUSTOMER_JS = r"""
   // 从后往前找顾客消息
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
+    const carrier = row.querySelector('.message-bubble-carrier');
+    if (carrier) {
+      const senderType = carrier.getAttribute('data-sender-type') || '';
+      const isSelf = Boolean(carrier.getAttribute('data-self'));
+      if (isSelf || senderType !== 'individual') continue;
+      const text = (carrier.innerText || carrier.textContent || '').trim();
+      if (!text) continue;
+      const domId = carrier.id || carrier.getAttribute('data-timestamp') || String(i);
+      let hash = 0; for (const c of domId + '|' + text) { hash = (hash * 31 + c.charCodeAt(0)) >>> 0; }
+      return { text, hash: 'm' + hash.toString(16), dom_id: domId };
+    }
     const statusRow = row.querySelector('.msg-wrap-status-row');
     if (statusRow) {
       const jc = getComputedStyle(statusRow).justifyContent;
@@ -384,7 +436,17 @@ _LAST_CUSTOMER_JS = r"""
 # 不能把这段统计误当顾客昵称，否则审批回填会永远匹配不到正确会话。
 _CURRENT_CUSTOMER_JS = r"""
 (() => {
+  const active = document.querySelector('.contact-list .chat-item.active, .chat-item.active');
+  if (active) {
+    const stableId = (active.getAttribute('data-key') || '').trim();
+    if (stableId) return stableId;
+    const titled = active.querySelector('p[title], [title]');
+    const title = (titled && titled.getAttribute('title') || '').trim();
+    if (title) return title;
+  }
   const selectors = [
+    '.chat-box-top-bar .user-info-detail',
+    '.chat-box-top-bar .user-info-detail span',
     '.contact-list .chat-item.active [class*="name"]',
     '.contact-list [class*="chat-item"][class*="active"] [class*="name"]',
     '.contact-list [aria-selected="true"] [class*="name"]',
@@ -401,6 +463,17 @@ _CURRENT_CUSTOMER_JS = r"""
     }
   }
   return '';
+})()
+"""
+
+# 当前活动会话是否明确显示“待人工回复/已等待”。仅在这个信号存在时，
+# Worker 重启后才处理最后一条顾客消息；普通历史会话仍只建立基线。
+_CURRENT_CONVERSATION_PENDING_JS = r"""
+(() => {
+  const active = document.querySelector('.contact-list .chat-item.active, .chat-item.active');
+  if (!active) return false;
+  const text = (active.innerText || active.textContent || '').replace(/\s+/g, ' ');
+  return /已等待\s*\d+\s*(?:秒|分钟)|待人工回复/.test(text);
 })()
 """
 

@@ -169,7 +169,10 @@ class SQLiteStore:
             """
             SELECT role, content FROM messages
             WHERE session_key = ?
-            ORDER BY created_at DESC LIMIT ?
+            -- 同一轮 user/assistant 可能拥有相同时间戳；rowid 保留实际写入
+            -- 顺序，倒序取数后整体 reverse 可稳定恢复 user → assistant。
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT ?
             """,
             (session_key, limit),
         ).fetchall()

@@ -196,7 +196,9 @@ XHS_CDP_PORT=19222 python run.py desktop   # macOS
 
 Worker 会自动回复普通咨询；退款、赔偿、改址、拦截等高风险操作会进入管理后台的待审队列，不会直接操作真实后台。
 
-手动接入抖店飞鸽时，用独立 Chrome 以 `19223` 调试端口打开抖店商家后台，登录并进入飞鸽会话页，再运行：
+抖店飞鸽推荐在已登录的 Chrome 中加载 `integrations/chrome-douyin-bridge/` 本地扩展；它会像千帆 Worker 一样读取当前会话的新顾客消息，调用同一套 Agent 后回填回复。首次连接只建立历史基线，高风险事项仍进入审批台。安装步骤见 [抖店飞鸽部署说明](docs/deployment-douyin.md)。
+
+无法加载扩展时，可用独立 Chrome 的 `19223` 调试端口作为备用：
 
 ```bash
 DOUYIN_CDP_URL=http://127.0.0.1:19223 python run.py douyin
@@ -212,6 +214,8 @@ xhs-kefu-demo/
 ├── deploy/
 │   ├── macos/                  # macOS 安装/启动/停止/换 Key
 │   └── windows/                # Windows 安装/启动/停止/换 Key
+├── integrations/
+│   └── chrome-douyin-bridge/  # 已登录 Chrome 的飞鸽自动回复扩展
 ├── docs/                       # 分系统部署说明
 ├── config/policy.toml          # 风控策略（补偿金额上限/证据/审批）
 ├── src/xhs_kefu/

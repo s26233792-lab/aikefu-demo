@@ -103,6 +103,22 @@ def main() -> None:
     assert human_review["handoff_reason"] == "少件争议"
     assert human_review["send_before_handoff"] is False
 
+    class FakeLookupRetryAgent:
+        async def run(self, **_: object) -> dict:
+            return {
+                "reply": "暂未查询到这笔订单，请核对订单号和手机号后四位后重新发送。",
+                "tool_calls": [{"name": "order_lookup", "result": None}],
+            }
+
+    lookup_retry = asyncio.run(
+        ZhixiaRuntime(llm_agent=FakeLookupRetryAgent(), tools=tools).handle(
+            text="订单号 123456，手机号后四位 7658"
+        )
+    )
+    assert lookup_retry["needs_human"] is False
+    assert lookup_retry["intent"] == "order_verification_retry"
+    assert lookup_retry["disposition"] == "auto_reply"
+
     print("zhixia policy checks: ok")
 
 

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from copy import deepcopy
 from datetime import datetime
@@ -26,16 +27,20 @@ _DATA_DIR = Path(__file__).resolve().parent / "data"
 class ZhixiaTools:
     """栀夏店铺数据查询工具。"""
 
-    def __init__(self, data_dir: Path | None = None) -> None:
+    def __init__(self, data_dir: Path | None = None, *, store: Any | None = None) -> None:
         data_dir = data_dir or _DATA_DIR
+        self.store = store
         self.products = self._load(data_dir / "zhixia_products.json")
         self.orders = self._load(data_dir / "zhixia_orders.json")
         self.members = self._load(data_dir / "zhixia_members.json")
+        campaigns_path = data_dir / "zhixia_campaigns.json"
+        self.campaigns = self._load(campaigns_path) if campaigns_path.exists() else []
         self.shop_rules = (data_dir / "zhixia_shop.md").read_text(encoding="utf-8")
         self._products_by_sku = {p["sku"]: p for p in self.products}
         self._orders_by_id = {o["order_id"]: o for o in self.orders}
         self._members_by_phone = {m["verify_phone_last4"]: m for m in self.members}
         self._policy_sections = self._parse_policy_sections(self.shop_rules)
+        self._order_notes: dict[str, list[dict[str, Any]]] = {}
 
     @staticmethod
     def _load(path: Path) -> list[dict[str, Any]]:
@@ -79,7 +84,7 @@ class ZhixiaTools:
 
     # ---------- 店铺政策 ----------
 
-    def policy_lookup(self, topic: str) -> dict[str, Any]:
+    def policy_lookup(self, topic: str, *, now: datetime | None = None) -> dict[str, Any]:
         """Return the most relevant store-policy sections for a customer topic."""
         aliases: dict[str, tuple[str, ...]] = {
             "发货与履约": ("发货", "催发", "预售", "现货", "拆单", "分包", "合并", "缺货", "锁单", "出库"),
@@ -88,6 +93,7 @@ class ZhixiaTools:
             "订单修改与取消": ("改地址", "联系人", "取消", "拦截", "改尺码", "改颜色", "合并订单"),
             "商品与库存": ("商品", "库存", "尺码", "面料", "颜色", "洗护", "色差"),
             "优惠、价保与优惠计算": ("优惠", "券", "满减", "折扣", "价保", "补差", "活动", "价格", "预算", "实付", "多少钱"),
+            "售前下单、催付与订单备注": ("下单", "购买", "怎么买", "立即购买", "待付款", "付款", "催付", "提醒付款", "核对订单", "订单明细", "备注"),
             "会员与积分": ("会员", "积分", "成长值", "等级"),
             "退换货与退款": ("退货", "换货", "退款", "取消", "到账", "七天", "质量", "错发", "少件", "破损", "售后"),
             "发票": ("发票", "开票", "税号", "抬头", "红冲"),
@@ -106,13 +112,39 @@ class ZhixiaTools:
         selected = [title for score, title in scores if score > 0][:3]
         if not selected:
             selected = ["店铺与客服"]
-        return {
+        queried_at = (now or datetime.now().astimezone()).astimezone()
+        result: dict[str, Any] = {
             "topic": query,
+            "queried_at": queried_at.isoformat(timespec="minutes"),
             "sections": [
                 {"title": title, "content": self._policy_sections.get(title, "")}
                 for title in selected
             ],
         }
+        if any(word in query for word in ("活动", "优惠", "券", "满减", "折扣", "价保", "实付", "多少钱", "价格")):
+            result["campaigns"] = self._campaign_snapshots(queried_at)
+        return result
+
+    def _campaign_snapshots(self, now: datetime) -> list[dict[str, Any]]:
+        """Return campaigns with a computed time status for reliable announcements."""
+        snapshots: list[dict[str, Any]] = []
+        for campaign in self.campaigns:
+            item = deepcopy(campaign)
+            try:
+                start_at = datetime.fromisoformat(str(item["start_at"]))
+                end_at = datetime.fromisoformat(str(item["end_at"]))
+                current = now.astimezone(start_at.tzinfo) if start_at.tzinfo else now.replace(tzinfo=None)
+                if current < start_at:
+                    item["status"] = "upcoming"
+                elif current > end_at:
+                    item["status"] = "expired"
+                else:
+                    item["status"] = "active"
+            except (KeyError, TypeError, ValueError):
+                item["status"] = "invalid"
+            snapshots.append(item)
+        snapshots.sort(key=lambda item: (item.get("status") != "active", item.get("start_at", "")), reverse=False)
+        return snapshots
 
     # ---------- 订单（核验订单号 + 手机号后四位）----------
 
@@ -133,6 +165,9 @@ class ZhixiaTools:
             if product:
                 item["name"] = product.get("name")
                 item["unit_price_cents"] = product.get("price_cents")
+
+        if "待付款" in str(result.get("status", "")):
+            result["payment_reminder_state"] = self._payment_reminder_state(result)
 
         # 给模型明确的查询时刻和物流时效事实，让它能识别过期 ETA，
         # 而不是把历史日期误说成“这两天”。
@@ -179,6 +214,100 @@ class ZhixiaTools:
                 fulfillment["ship_eta_overdue"] = now.date() > ship_eta_end
             result["fulfillment_freshness"] = fulfillment
         return result
+
+    @staticmethod
+    def _payment_reminder_state(order: dict[str, Any], *, now: datetime | None = None) -> dict[str, Any]:
+        """Evaluate reminder eligibility without sending anything to the customer."""
+        current = (now or datetime.now().astimezone()).astimezone()
+        policy = order.get("payment_reminder") or {}
+        count = int(policy.get("count_24h", 0) or 0)
+        max_count = int(policy.get("max_24h", 2) or 2)
+        min_interval = int(policy.get("min_interval_minutes", 120) or 120)
+        eligible = "待付款" in str(order.get("status", "")) and count < max_count
+        reason = "eligible" if eligible else "frequency_limit"
+        deadline_text = str(order.get("payment_deadline", ""))
+        if deadline_text:
+            try:
+                deadline = datetime.fromisoformat(deadline_text)
+                comparable_now = current.astimezone(deadline.tzinfo) if deadline.tzinfo else current.replace(tzinfo=None)
+                if comparable_now >= deadline:
+                    eligible = False
+                    reason = "payment_expired"
+            except ValueError:
+                pass
+        last_text = str(policy.get("last_at", ""))
+        if eligible and last_text:
+            try:
+                last_at = datetime.fromisoformat(last_text)
+                comparable_now = current.astimezone(last_at.tzinfo) if last_at.tzinfo else current.replace(tzinfo=None)
+                if (comparable_now - last_at).total_seconds() < min_interval * 60:
+                    eligible = False
+                    reason = "interval_limit"
+            except ValueError:
+                pass
+        return {
+            "eligible": eligible,
+            "reason": reason,
+            "count_24h": count,
+            "max_24h": max_count,
+            "min_interval_minutes": min_interval,
+            "payment_deadline": deadline_text or None,
+        }
+
+    def add_order_note(
+        self,
+        order_id: str,
+        phone_last4: str,
+        note: str,
+        confirmed: bool = False,
+    ) -> dict[str, Any]:
+        """Record a short, confirmed, non-sensitive order note in the demo sandbox."""
+        order = self.order_lookup(order_id, phone_last4)
+        if order is None:
+            return {"ok": False, "error": "order_not_found"}
+        if order.get("error"):
+            return {"ok": False, **order}
+        clean_note = re.sub(r"\s+", " ", str(note)).strip()
+        if not clean_note:
+            return {"ok": False, "error": "note_required"}
+        if len(clean_note) > 80:
+            return {"ok": False, "error": "note_too_long", "max_length": 80}
+        if re.search(r"\b1\d{10}\b|验证码|支付密码|银行卡|身份证", clean_note):
+            return {"ok": False, "error": "sensitive_content"}
+        if not confirmed:
+            return {
+                "ok": False,
+                "error": "confirm_required",
+                "note_summary": clean_note,
+                "message": "请向顾客复述备注摘要并取得明确确认后再写入",
+            }
+        now = datetime.now().astimezone().isoformat(timespec="seconds")
+        note_id = "note_" + hashlib.sha1(
+            f"{order_id}|{clean_note}".encode("utf-8")
+        ).hexdigest()[:12]
+        record = {
+            "id": note_id,
+            "order_id": order_id,
+            "note_summary": clean_note,
+            "created_at": now,
+            "sandbox": True,
+            "fulfillment_guaranteed": False,
+        }
+        self._order_notes.setdefault(order_id, []).append(record)
+        if self.store is not None:
+            self.store.save_action(
+                action_id=note_id,
+                business_key=f"order_note|{order_id}|{hashlib.sha1(clean_note.encode('utf-8')).hexdigest()[:12]}",
+                action_type="order_note",
+                payload={
+                    "order_id": order_id,
+                    "note_summary": clean_note,
+                    "fulfillment_guaranteed": False,
+                },
+                state="completed",
+                created_at=now,
+            )
+        return {"ok": True, **record}
 
     # ---------- 会员 ----------
 

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>栀夏客服 Agent</title>
+    <style>
+      body { width: 260px; margin: 0; padding: 16px; color: #172033; font: 14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif; background: #f8fafc; }
+      h1 { margin: 0 0 4px; font-size: 16px; }
+      p { margin: 0; color: #64748b; }
+      .row { display: flex; align-items: center; justify-content: space-between; margin-top: 16px; padding: 12px; border: 1px solid #e2e8f0; border-radius: 10px; background: white; }
+      .switch { position: relative; width: 42px; height: 24px; }
+      .switch input { opacity: 0; width: 0; height: 0; }
+      .slider { position: absolute; inset: 0; cursor: pointer; border-radius: 99px; background: #94a3b8; transition: .2s; }
+      .slider:before { content: ""; position: absolute; width: 18px; height: 18px; left: 3px; top: 3px; border-radius: 50%; background: white; transition: .2s; }
+      input:checked + .slider { background: #16a34a; }
+      input:checked + .slider:before { transform: translateX(18px); }
+      #health { margin-top: 12px; font-size: 12px; }
+      .ok { color: #15803d; }
+      .error { color: #b91c1c; }
+    </style>
+  </head>
+  <body>
+    <h1>栀夏客服 Agent</h1>
+    <p>抖店飞鸽 · 本机连接</p>
+    <div class="row">
+      <span>自动回复普通咨询</span>
+      <label class="switch">
+        <input id="enabled" type="checkbox">
+        <span class="slider"></span>
+      </label>
+    </div>
+    <p id="health">正在检查本地 Agent…</p>
+    <script src="popup.js"></script>
+  </body>
+</html>

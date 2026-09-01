@@ -18,7 +18,7 @@ from typing import Any
 
 from .decision import Disposition, analyze_tone, decide
 from .safety import check_inbound, check_outbound
-from .zhixia_agent import ZhixiaLLMAgent
+from .zhixia_agent import ZhixiaLLMAgent, looks_like_internal_analysis
 from .zhixia_rules import ZhixiaRuleAgent
 from .zhixia_tools import ZhixiaTools
 
@@ -28,21 +28,34 @@ HANDOFF_KEYWORDS = (
     "转人工", "人工客服", "骗子", "欺诈", "气死", "垃圾",
 )
 
-# 话题分组关键词：用于检测顾客是否切换话题（避免历史上下文污染）
+# 话题分组关键词：用于检测顾客是否切换话题（避免历史上下文污染）。
+# 顺序很重要：先匹配更具体的话题，避免“退款”里的“款”被识别成商品。
 _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
-    "product": ("推荐", "买", "款", "颜色", "尺码", "材质", "面料", "价格", "多少钱", "白衬衫", "西装", "裙子", "开衫", "阔腿裤", "背心", "穿搭", "通勤", "面试", "约会", "有货", "库存", "深灰", "灰色", "卡其", "黑色", "白色", "雾蓝", "奶杏", "酒红", "珍珠白", "M码", "L码", "S码", "XL码", "胸围", "腰围", "臀围", "身高", "体重"),
-    "order": ("订单", "查单", "下单", "改地址", "发货", "取消"),
-    "logistics": ("物流", "快递", "到哪", "几天到", "签收", "运单", "轨迹", "派送"),
-    "aftersale": ("退", "换货", "退款", "售后", "七无", "价保", "补偿"),
+    "aftersale": ("退货", "换货", "退款", "退钱", "仅退款", "能退", "可以退", "退吗", "退掉", "退回", "售后", "七天无理由", "质量问题", "色差", "破损", "少件", "错发", "价保", "补差", "补偿"),
+    "logistics": ("物流", "快递", "到哪", "几天到", "多久到", "签收", "运单", "轨迹", "派送", "送达", "催发", "发货", "到货"),
+    "order": ("订单", "查单", "核对订单", "订单明细", "待付款", "付款", "催付", "备注", "改地址", "修改地址", "取消订单", "拦截"),
+    "campaign": ("活动", "满减", "折扣", "优惠", "优惠券", "促销"),
     "member": ("会员", "积分", "等级", "成长值", "券"),
+    "product": ("商品", "推荐", "这款", "那款", "款式", "颜色", "尺码", "材质", "面料", "价格", "多少钱", "衬衫", "西装", "裙", "开衫", "裤", "背心", "穿搭", "通勤", "面试", "约会", "有货", "库存", "深灰", "灰色", "卡其", "黑色", "白色", "雾蓝", "奶杏", "酒红", "珍珠白", "M码", "L码", "S码", "XL码", "胸围", "腰围", "臀围", "肩宽", "身高", "体重", "SKU"),
+    "service": ("客服时间", "几点下班", "几点上班", "营业时间", "开发票", "发票", "隐私", "手机号", "验证码"),
     "chitchat": ("你好", "在吗", "谢谢", "再见", "你是谁", "你们"),
 }
 
-# 指代词：含这些词说明是"跟随上一轮话题"，不应裁历史
-_REFERENCE_WORDS = ("那", "这个", "这", "它", "上面", "刚才", "这款", "那款", "那件", "它家", "就它", "这个有", "那有")
+# 只有明确的指代表达才允许继承历史。不能再用裸字“这/那”做子串匹配，
+# 否则“这个活动”“这次退款”等独立新问题都会错误继承上一轮。
+_REFERENCE_RE = re.compile(
+    r"(?:^|[，。！？、\s])(?:这个|那个|这件|那件|它|上面(?:那个|那款)?|刚才(?:说的)?|"
+    r"前面(?:说的)?|就它|就是这个|就是那个)(?:呢|怎么样|可以吗|还有吗)?(?:$|[，。！？、\s])"
+)
+_SHORT_FOLLOWUP_RE = re.compile(
+    r"^(?:好|好的|好呀|行|可以|不可以|确认|确认写入|确认备注|要|不要|需要|不需要|"
+    r"有|没有|还有吗|多少钱|多久|为什么|怎么弄|怎么办|哪个|都要|就这个|就那个|"
+    r"\d{4}|ZX\d{12})[。！？!?]?$",
+    re.IGNORECASE,
+)
 
 
-def naturalize_customer_reply(reply: str) -> str:
+def naturalize_customer_reply(reply: str, *, suppress_intro: bool = False) -> str:
     """Remove internal/demo wording before a reply reaches a customer."""
     reply = re.sub(
         r"如果要体验查单[^。！？]*?(?:7319|手机号后四位)[^。！？]*[。！？]?",
@@ -88,8 +101,27 @@ def naturalize_customer_reply(reply: str) -> str:
     }
     for source, target in fulfillment_replacements.items():
         reply = reply.replace(source, target)
+    if suppress_intro:
+        reply = re.sub(
+            r"^\s*(?:您好|你好)?[，,～~！!。]*\s*我是.{0,30}?客服(?:小栀)?[。！？，,～~]*\s*",
+            "",
+            reply,
+            count=1,
+        )
+        reply = reply.replace("作为栀夏女装客服小栀，", "作为店铺客服，")
     # 最后的兜底：即使模型偏离提示，也不把内部测试语境暴露给顾客。
-    reply = reply.replace("演示", "").replace("模拟", "").replace("**", "").replace("`", "")
+    reply = reply.replace("演示", "").replace("模拟", "").replace("`", "")
+    # 只移除 Markdown 加粗符号，保留地址脱敏中的连续星号（例如“文三路***号”）。
+    masked_star_runs: list[str] = []
+
+    def protect_mask(match: re.Match[str]) -> str:
+        masked_star_runs.append(match.group(0))
+        return f"\x00MASKED_STARS_{len(masked_star_runs) - 1}\x00"
+
+    reply = re.sub(r"\*{3,}", protect_mask, reply)
+    reply = re.sub(r"\*\*(?=\S)(.+?)(?<=\S)\*\*", r"\1", reply)
+    for index, stars in enumerate(masked_star_runs):
+        reply = reply.replace(f"\x00MASKED_STARS_{index}\x00", stars)
     # 客服聊天框使用纯文本项目符号，清除模型偶尔输出的 Markdown 列表标记。
     reply = re.sub(r"(?m)^\s*[-*]\s+", "· ", reply)
     reply = re.sub(r"(?m)^\s*(\d+)\.\s+", r"\1、", reply)
@@ -98,12 +130,12 @@ def naturalize_customer_reply(reply: str) -> str:
 
 
 def detect_topic(text: str) -> str:
-    """识别消息主题分组。含指代词时返回 'reference'（跟随上文）。"""
-    if any(w in text for w in _REFERENCE_WORDS):
-        return "reference"
+    """识别消息主题；明确主题优先于指代，防止新问题误继承上文。"""
     for topic, words in _TOPIC_GROUPS.items():
         if any(w in text for w in words):
             return topic
+    if _REFERENCE_RE.search(text.strip()) or _SHORT_FOLLOWUP_RE.fullmatch(text.strip()):
+        return "reference"
     return "other"
 
 
@@ -117,25 +149,45 @@ class ZhixiaRuntime:
     def _build_llm_history(text: str, history: list[dict[str, str]]) -> list[dict[str, str]]:
         """裁剪历史，避免话题切换时上一轮内容污染回答。
 
-        - 含指代词（"那/这个/它"）→ 跟随上文，不裁剪，保留最近若干轮；
-        - 同一个话题 → 保留最近同话题轮次；
+        - 明确指代或短确认 → 只保留最近两轮；
+        - 同一个话题 → 只保留最近一轮问答；
         - 切换到全新话题 → 清空历史。
         """
+        if not history:
+            return []
         current_topic = detect_topic(text)
-        # 指代或无法识别时，尽量保留最近历史（帮助理解指代）
-        if current_topic in ("reference", "other"):
-            return history[-6:]
-        # 同话题：保留最近同话题轮次（最多6轮）
-        filtered: list[dict[str, str]] = []
-        for item in reversed(history):
-            if detect_topic(item.get("content", "")) in (current_topic, "reference", "other"):
-                filtered.append(item)
-            if len(filtered) >= 6:
-                break
-        return list(reversed(filtered))
+        if current_topic == "reference":
+            return history[-4:]
 
-    def _tool_executor(self):
+        # 无法识别的完整新问题默认不带历史。宁可追问一次，也不把旧答案带进来。
+        if current_topic in ("other", "chitchat"):
+            return []
+
+        last_user_index = next(
+            (
+                index
+                for index in range(len(history) - 1, -1, -1)
+                if history[index].get("role") == "user"
+            ),
+            None,
+        )
+        if last_user_index is None:
+            return []
+        last_topic = detect_topic(history[last_user_index].get("content", ""))
+        if last_topic != current_topic:
+            return []
+        # 只给模型最近一轮同话题问答，不混入更早的“other/reference”内容。
+        return history[last_user_index:][-2:]
+
+    def _tool_executor(
+        self,
+        *,
+        current_text: str = "",
+        history: list[dict[str, str]] | None = None,
+    ):
         """工具执行器：注入可信上下文，写操作沙箱化。"""
+
+        recent_history = history or []
 
         def execute(name: str, args: dict) -> Any:
             if name == "product_lookup":
@@ -166,6 +218,24 @@ class ZhixiaRuntime:
                     order_id=args.get("order_id", ""),
                     phone_last4=args.get("phone_last4", ""),
                 )
+            if name == "add_order_note":
+                explicit_confirmation = any(
+                    marker in current_text
+                    for marker in ("确认", "确认写入", "确认备注", "确认提交", "就按这个")
+                )
+                note_context = "备注" in current_text or any(
+                    item.get("role") == "assistant"
+                    and "备注" in item.get("content", "")
+                    and "确认" in item.get("content", "")
+                    and "写入" in item.get("content", "")
+                    for item in recent_history[-4:]
+                )
+                return self.tools.add_order_note(
+                    order_id=args.get("order_id", ""),
+                    phone_last4=args.get("phone_last4", ""),
+                    note=args.get("note", ""),
+                    confirmed=bool(args.get("confirmed", False) and explicit_confirmation and note_context),
+                )
             if name == "request_human_review":
                 return {
                     "ok": True,
@@ -177,7 +247,13 @@ class ZhixiaRuntime:
 
         return execute
 
-    async def handle(self, *, text: str, history: list[dict[str, str]] | None = None) -> dict:
+    async def handle(
+        self,
+        *,
+        text: str,
+        history: list[dict[str, str]] | None = None,
+        suppress_intro: bool = False,
+    ) -> dict:
         history = history or []
         # 1. 入站护栏（注入检测）
         inbound = check_inbound(text)
@@ -206,7 +282,10 @@ class ZhixiaRuntime:
                 "intent": "handoff_human", "tone": tone.value,
                 "disposition": Disposition.HANDOFF_HUMAN.value,
                 "needs_human": True,
-                "reply": "已提交人工专员复核，预计 2 小时内反馈；23:00 后提交的申请将在次日 10:00 前优先处理。",
+                "reply": (
+                    "抱歉这次确实给您添麻烦了。这个情况需要人工专员进一步核实，"
+                    "预计 2 小时内反馈；23:00 后提交的申请会在次日 10:00 前优先处理。"
+                ),
                 "tool_calls": [], "moderation_id": f"mod_{uuid.uuid4().hex}",
                 "handoff_reason": handoff_reason,
             }
@@ -217,27 +296,43 @@ class ZhixiaRuntime:
         if self.llm_agent is not None:
             try:
                 llm_history = self._build_llm_history(text, history)
-                is_first = len(history) == 0
+                # 千帆/飞鸽等外部客服工作台往往已经显示平台欢迎语或人工接入语。
+                # 即便本地数据库里还没有历史，也按后续会话口吻直接解决问题。
+                is_first = len(history) == 0 and not suppress_intro
                 result = await self.llm_agent.run(
                     message_text=text, history=llm_history,
-                    tool_executor=self._tool_executor(),
+                    tool_executor=self._tool_executor(current_text=text, history=llm_history),
                     is_first_turn=is_first,
                 )
                 reply = result["reply"]
                 tool_calls = result["tool_calls"]
+                # 两次模型约束后仍输出内部工作笔记时，宁可退回确定性客服回复，
+                # 也不能把“顾客提到/我需要核实”一类分析发送出去。
+                if looks_like_internal_analysis(reply):
+                    safe_result = self.rule_agent.run(
+                        text,
+                        is_first_turn=(len(history) == 0 and not suppress_intro),
+                    )
+                    intent = safe_result["intent"]
+                    reply = safe_result["reply"]
+                    tool_calls = safe_result["tool_calls"]
+                    fallback_needs_human = safe_result.get("needs_human", False)
             except Exception:  # noqa: BLE001
                 # 不泄露内部错误给顾客，统一转人工兜底
                 reply = "抱歉，我这边暂时无法处理，已为您转交人工客服，请稍候。"
                 tool_calls = []
         else:
-            result = self.rule_agent.run(text)
+            result = self.rule_agent.run(
+                text,
+                is_first_turn=(len(history) == 0 and not suppress_intro),
+            )
             intent = result["intent"]
             reply = result["reply"]
             tool_calls = result["tool_calls"]
             fallback_needs_human = result.get("needs_human", False)
 
         # 5. 客服口径规范化 + 出站护栏
-        reply = naturalize_customer_reply(reply)
+        reply = naturalize_customer_reply(reply, suppress_intro=suppress_intro)
         if not reply:
             reply = "您好，请问想了解商品、尺码，还是订单售后呢？"
         logistics_exception = any(
@@ -279,17 +374,46 @@ class ZhixiaRuntime:
                 for word in ("物流", "发货", "未发", "派送", "揽收", "时效", "超时", "72小时")
             )
         )
-        lookup_failure = any(
+        lookup_retry = any(
             call.get("name") in {"order_lookup", "logistics_lookup"}
             and (
                 call.get("result") is None
                 or (
                     isinstance(call.get("result"), dict)
-                    and call["result"].get("error") not in {None, "verify_required"}
+                    and call["result"].get("error") in {"verify_required", "verify_failed"}
                 )
             )
             for call in tool_calls
         )
+        lookup_failure = any(
+            call.get("name") in {"order_lookup", "logistics_lookup"}
+            and isinstance(call.get("result"), dict)
+            and call["result"].get("error") not in {None, "verify_required", "verify_failed"}
+            for call in tool_calls
+        )
+        order_note_call = next(
+            (call for call in reversed(tool_calls) if call.get("name") == "add_order_note"),
+            None,
+        )
+        order_note_result = order_note_call.get("result") if order_note_call else None
+        if order_note_call and isinstance(order_note_result, dict):
+            if order_note_result.get("ok"):
+                note_summary = str(order_note_result.get("note_summary", "")).strip()
+                reply = (
+                    f"订单备注已记录：“{note_summary}”。备注会供客服和仓库参考，"
+                    "但不代表配送时间或其他要求一定能够满足。"
+                )
+            else:
+                note_error = order_note_result.get("error")
+                if note_error == "confirm_required":
+                    note_summary = str(order_note_result.get("note_summary", "")).strip()
+                    reply = f"准备写入的备注是“{note_summary}”。确认将这段内容写入订单备注吗？"
+                elif note_error == "sensitive_content":
+                    reply = "备注中不能包含完整手机号、身份证、银行卡、验证码或支付密码。请删去敏感信息后重新提供备注内容。"
+                elif note_error == "note_too_long":
+                    reply = "订单备注最多 80 字，请精简后重新发送。"
+                else:
+                    reply = "订单备注暂未写入，请核对订单信息和备注内容后重试。"
         if logistics_exception or fulfillment_exception:
             # API 随后会创建人工待办，因此异常回执要直接告知已受理，
             # 不能让模型反问“是否需要处理”，导致顾客误以为尚未登记。
@@ -310,12 +434,16 @@ class ZhixiaRuntime:
         out = check_outbound(reply)
         if high_risk_write:
             intent = "order_change_request"
+        elif order_note_call and isinstance(order_note_result, dict):
+            intent = "order_note_written" if order_note_result.get("ok") else "order_note_confirm"
         elif logistics_exception and safe_exception_review:
             intent = "logistics_exception"
         elif fulfillment_exception and safe_exception_review:
             intent = "shipping_exception"
         elif requested_human_review or lookup_failure:
             intent = "human_review"
+        elif lookup_retry:
+            intent = "order_verification_retry"
         needs_human = (
             fallback_needs_human
             or logistics_exception

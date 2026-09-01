@@ -1,0 +1,28 @@
+[
+  {
+    "id": "AUTUMN-COMMUTE-2026-09",
+    "name": "秋季通勤焕新",
+    "start_at": "2026-09-01T00:00:00+08:00",
+    "end_at": "2026-09-15T23:59:59+08:00",
+    "eligible_skus": ["ZX-K102", "ZX-S208", "ZX-T315", "ZX-J407"],
+    "offers": [
+      {"type": "multi_buy_discount", "threshold_quantity": 2, "discount_rate": 0.95, "label": "指定商品任意两件 95 折"},
+      {"type": "store_coupon", "threshold_cents": 29900, "discount_cents": 3000, "label": "满 ¥299 减 ¥30"},
+      {"type": "store_coupon", "threshold_cents": 49900, "discount_cents": 6000, "label": "满 ¥499 减 ¥60"}
+    ],
+    "stacking": "商品折扣可叠加一张符合门槛的店铺券或新客券；积分在券后抵扣。",
+    "exclusions": ["限时秒杀", "直播间专属赠品", "平台红包", "运费变化"],
+    "price_protection_days": 7
+  },
+  {
+    "id": "LATE-SUMMER-2026-08",
+    "name": "夏末通勤季",
+    "start_at": "2026-08-18T00:00:00+08:00",
+    "end_at": "2026-08-31T23:59:59+08:00",
+    "eligible_skus": ["ZX-K102", "ZX-S208", "ZX-T315", "ZX-J407"],
+    "offers": [{"type": "multi_buy_discount", "threshold_quantity": 2, "discount_rate": 0.95, "label": "指定商品任意两件 95 折"}],
+    "stacking": "商品折扣可叠加一张符合门槛的店铺券或新客券；积分在券后抵扣。",
+    "exclusions": ["限时秒杀", "直播间专属赠品", "平台红包", "运费变化"],
+    "price_protection_days": 7
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "栀夏客服 Agent · 抖店飞鸽",
+  "version": "1.0.0",
+  "description": "把已登录的抖店飞鸽 Chrome 页面接到本机栀夏客服 Agent。",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://127.0.0.1:18081/*",
+    "https://im.jinritemai.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "栀夏客服 Agent",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://im.jinritemai.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

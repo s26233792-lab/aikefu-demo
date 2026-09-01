@@ -44,11 +44,11 @@ URL_KEYWORDS = _csv_env(
 TITLE_KEYWORDS = _csv_env("DOUYIN_PAGE_TITLE_KEYWORDS", "飞鸽,抖店客服")
 ROW_SELECTORS = _csv_env(
     "DOUYIN_MESSAGE_ROW_SELECTORS",
-    ".message-item,.msg-item,[class*='messageItem'],[class*='message-item'],[class*='msg-item']",
+    "[data-qa-id='qa-message-warpper'],.msgItemWrap,.message-item,.msg-item,[class*='messageItem'],[class*='message-item'],[class*='msg-item']",
 )
 INPUT_SELECTORS = _csv_env(
     "DOUYIN_INPUT_SELECTORS",
-    "textarea,[contenteditable='true'][role='textbox'],[contenteditable='true']",
+    "textarea[data-qa-id='qa-send-message-textarea'],textarea,[contenteditable='true'][role='textbox'],[contenteditable='true']",
 )
 CONTACT_SELECTORS = _csv_env(
     "DOUYIN_CONTACT_SELECTORS",
@@ -399,6 +399,7 @@ class DouyinFeigeWorker:
             "message_id": message.get("dom_id") or fingerprint,
             "tenant_id": self.tenant_id,
             "store_id": self.store_id,
+            "suppress_intro": True,
         }
         async with httpx.AsyncClient(timeout=60) as client:
             response = await client.post(
