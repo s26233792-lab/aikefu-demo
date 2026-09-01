@@ -271,9 +271,19 @@ class QianfanCdpWorker:
         decision = await self.decide(text, customer_id, fingerprint)
         if not decision:
             return
-        # 人工接管中的会话：不自动回复，但在真实千帆里弹提醒 + 系统级强制提醒
+        # 首次触发人工接管时先发送一次短安抚；已接管会话的后续消息 reply 为空，
+        # 因此不会重复安抚，只会提醒人工。
         if decision.get("status") == "taken_over":
-            print(f"[cdp-worker v2] 会话已人工接管，不自动回复: {text[:30]}...")
+            reply = (decision.get("reply") or "").strip()
+            if decision.get("send_before_handoff") and reply:
+                if await self._send(
+                    session,
+                    reply,
+                    expected_customer=customer_id,
+                    expected_fingerprint=fingerprint,
+                ):
+                    print(f"[cdp-worker v2] 已发送安抚语并转人工: {reply[:40]}...")
+            print(f"[cdp-worker v2] 会话已转人工，停止后续自动回复: {text[:30]}...")
             await self._notify_in_qianfan(session, f"🙋 需要人工接管：{text[:30]}")
             system_notify("critical")  # 置顶 + 任务栏持续闪烁 + 声音
             return

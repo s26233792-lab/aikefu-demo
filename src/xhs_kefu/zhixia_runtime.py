@@ -28,6 +28,17 @@ HANDOFF_KEYWORDS = (
     "转人工", "人工客服", "骗子", "欺诈", "气死", "垃圾",
 )
 
+
+def _handoff_ack(text: str, tone: str) -> str:
+    """生成可直接发给顾客的一次性短安抚语，不承诺处理结果或时效。"""
+    if tone == "needs_human":
+        return "好的，我这边马上转人工客服为您处理，请稍等一下。"
+    if any(word in text for word in ("物流", "快递", "没到", "没发货", "退款", "未到账")):
+        return "抱歉让您久等了，我已经转给人工客服核实处理，请稍等一下。"
+    if any(word in text for word in ("色差", "线头", "破损", "开线", "瑕疵", "错发", "少件")):
+        return "真的很抱歉让您遇到这个情况，我已经转给人工客服核实，请稍等一下。"
+    return "很抱歉这次没有让您满意，我已经转给人工客服介入处理，请稍等一下。"
+
 # 话题分组关键词：用于检测顾客是否切换话题（避免历史上下文污染）。
 # 顺序很重要：先匹配更具体的话题，避免“退款”里的“款”被识别成商品。
 _TOPIC_GROUPS: dict[str, tuple[str, ...]] = {
@@ -282,11 +293,10 @@ class ZhixiaRuntime:
                 "intent": "handoff_human", "tone": tone.value,
                 "disposition": Disposition.HANDOFF_HUMAN.value,
                 "needs_human": True,
-                "reply": (
-                    "抱歉这次确实给您添麻烦了。这个情况需要人工专员进一步核实，"
-                    "预计 2 小时内反馈；23:00 后提交的申请会在次日 10:00 前优先处理。"
-                ),
+                "reply": _handoff_ack(text, tone.value),
                 "tool_calls": [], "moderation_id": f"mod_{uuid.uuid4().hex}",
+                # 渠道先发送这一条短安抚语，然后立即停止自动回复并等待人工。
+                "send_before_handoff": True,
                 "handoff_reason": handoff_reason,
             }
 

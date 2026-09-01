@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from xhs_kefu.api import create_app
 from xhs_kefu.config import BASE_DIR, Settings
+from xhs_kefu.decision import Tone, analyze_tone
 from xhs_kefu.feedback import detect_negative_feedback
 from xhs_kefu.storage import SQLiteStore
 
@@ -35,6 +36,9 @@ def test_detection() -> None:
     assert detect_negative_feedback("想看看白衬衫有什么推荐") is None
     critical = detect_negative_feedback("再不处理我就找 12315 投诉")
     assert critical is not None and critical.severity == "critical"
+    assert analyze_tone("这件衬衫收到以后色差挺明显的，线头也很多") == Tone.NEGATIVE
+    assert analyze_tone("这个处理我不太满意，客服回复也太敷衍了") == Tone.NEGATIVE
+    assert analyze_tone("白色会不会有色差？") == Tone.NORMAL
 
 
 def test_store_stats(tmp: Path) -> None:
@@ -77,8 +81,23 @@ def test_api_capture_and_status(tmp: Path) -> None:
         first = client.post("/zhixia/decide", json=payload)
         second = client.post("/zhixia/decide", json=payload)
         assert first.status_code == 200
-        assert first.json().get("feedback_id")
+        first_result = first.json()
+        assert first_result.get("feedback_id")
+        assert first_result["status"] == "taken_over"
+        assert first_result["send_before_handoff"] is True
+        assert "人工客服" in first_result["reply"]
+        assert len(first_result["reply"]) <= 45
         assert second.status_code == 200
+        assert second.json()["status"] == "taken_over"
+        assert second.json()["reply"] == ""
+
+        session_key = first_result["session_key"]
+        handoff = app.state.runtime.store.get_handoff(session_key)
+        assert handoff is not None and handoff["state"] == "human_active"
+        moderation = app.state.runtime.store.get_moderation(first_result["moderation_id"])
+        assert moderation is not None
+        assert moderation["kind"] == "handoff"
+        assert moderation["content"] == payload["text"]
 
         rows = client.get("/v1/feedback").json()["feedback"]
         assert len(rows) == 1

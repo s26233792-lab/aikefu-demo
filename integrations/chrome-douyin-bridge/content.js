@@ -203,7 +203,10 @@
     });
     const reply = String(decision?.reply || "").trim();
     if (decision?.status === "taken_over") {
-      showStatus("这条消息需要人工接管，已停止自动回复", "warning", 0);
+      if (decision?.send_before_handoff && reply) {
+        await sendReply(reply, customerId, message.fingerprint);
+      }
+      showStatus("已安抚顾客并转人工，自动回复已停止", "warning", 0);
       return;
     }
     if (decision?.needs_approval || decision?.status === "pending_approval") {

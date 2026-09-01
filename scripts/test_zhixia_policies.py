@@ -98,7 +98,7 @@ def main() -> None:
 
     human_review = asyncio.run(
         ZhixiaRuntime(llm_agent=FakeHumanReviewAgent(), tools=tools).handle(
-            text="收到后发现少了一件"
+            text="订单信息好像对不上，麻烦帮我核实一下"
         )
     )
     assert human_review["needs_human"] is True

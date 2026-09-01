@@ -270,12 +270,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             store.add_moderation(
                 id=mod_id, session_key=session_key, customer_id=customer_id,
                 kind="handoff" if disposition == "handoff_human" else "reply",
-                content=result.get("reply") or req.text, intent=result.get("intent", "handoff"),
+                # 人工接管任务展示顾客原话；安抚回复本身不应覆盖投诉内容。
+                content=(
+                    req.text
+                    if disposition == "handoff_human"
+                    else (result.get("reply") or req.text)
+                ),
+                intent=result.get("intent", "handoff"),
                 reason_code=result.get("handoff_reason") or "NEEDS_HUMAN",
                 created_at=now,
                 tenant_id=req.tenant_id,
                 store_id=req.store_id,
                 channel=req.channel,
+            )
+        if disposition == "handoff_human":
+            # 一次性安抚发送后立刻锁定会话。后续顾客消息只提醒人工，
+            # 不再交给 Agent 生成回复，直到客服明确释放会话。
+            store.set_handoff(
+                session_key=session_key,
+                state="human_active",
+                reason=result.get("handoff_reason") or "automatic_handoff",
+                updated_at=now,
             )
         result["status"] = status
         result["needs_approval"] = needs_approval

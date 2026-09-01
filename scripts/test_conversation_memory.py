@@ -136,7 +136,9 @@ def test_repeated_text_and_unsent_draft_storage() -> None:
                     "SELECT role FROM messages WHERE session_key = ?", (pending_session,)
                 ).fetchall()
             ]
-            assert pending_roles == ["user"]
+            # 首次不满会先发送并记录一条短安抚语，然后立即锁定人工接管。
+            assert pending.json()["send_before_handoff"] is True
+            assert pending_roles == ["user", "assistant"]
 
 
 def test_internal_analysis_never_reaches_customer() -> None:

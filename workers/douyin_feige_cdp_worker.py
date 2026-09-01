@@ -412,6 +412,8 @@ class DouyinFeigeWorker:
 
         reply = (decision.get("reply") or "").strip()
         if decision.get("status") == "taken_over":
+            if decision.get("send_before_handoff") and reply:
+                await self._send(session, reply)
             await self._notify(session, f"需要人工接管：{text[:35]}", critical=True)
             return
         if decision.get("needs_approval") or decision.get("status") == "pending_approval":

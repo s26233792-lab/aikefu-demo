@@ -46,18 +46,34 @@ class Decision:
     tone: Tone = Tone.NORMAL
 
 
-# 明确要求转人工（才设置会话级接管锁，停用自动回复）
+# 明确要求转人工
 _EXPLICIT_HANDOFF_WORDS = ("转人工", "人工客服", "真人", "找人工", "人工服务")
 
-# 投诉/情绪升级（本条转人工待办 + 弹提醒，但不锁会话）
+# 投诉/情绪升级
 _COMPLAINT_WORDS = ("投诉", "差评", "平台介入", "12315", "工商", "法院", "报警", "举报", "维权")
 # 强烈情绪词（配合其他词易触发升级，单看不算投诉）
 _EMOTION_WORDS = (
     "气死", "垃圾店", "骗人", "太差", "极度", "非常不满", "再也不买", "欺骗", "诈骗",
+    "不满意", "不太满意", "体验很差", "服务很差", "态度很差", "太敷衍", "不负责任",
     # 真实售后反馈里常见的失望/描述不符表达。它们不是普通售前疑问，
     # 应进入人工复核，避免规则兜底误把质量投诉当成商品推荐。
     "很失望", "太失望", "做工很差", "做工太差", "严重偏小", "严重偏大", "描述不符", "根本不准",
 )
+
+# 真实顾客很少直接说“我不满”，更常见的是描述已经发生的问题。
+# 只有“问题事实 + 已发生/程度表达”同时出现才升级，避免把
+# “白色会不会有色差？”这类普通售前疑问误判为投诉。
+_ISSUE_WORDS = (
+    "色差", "线头", "破损", "开线", "异味", "瑕疵", "污渍", "掉色", "起球",
+    "少件", "漏发", "错发", "不合身", "尺码不准", "偏小", "偏大",
+    "没发货", "没到", "未到账", "退款没到", "不回复", "没人管",
+)
+_DEFINITE_ISSUE_MARKERS = (
+    "明显", "很多", "一堆", "严重", "一直", "根本", "这么久", "拖了",
+    "还是没", "至今", "太久", "不处理", "没人管", "很失望", "太失望", "离谱",
+)
+_RECEIVED_MARKERS = ("收到以后", "收到后", "到手以后", "到手后", "实物")
+_PRESALE_MARKERS = ("会不会", "容易", "可能", "有色差吗", "色差大不大")
 
 # 写操作意图（退款/补偿/少发/改址/拦截）
 # 注意：不含"赔付"（会误伤"赔付政策/赔付规则"这类纯咨询）
@@ -71,17 +87,26 @@ _WRITE_PATTERNS = (
 
 
 def is_explicit_handoff(text: str) -> bool:
-    """是否顾客明确要求转人工（设置会话级接管锁的依据）。"""
+    """是否顾客明确要求转人工。"""
     return any(w in text for w in _EXPLICIT_HANDOFF_WORDS)
 
 
 def detect_complaint(text: str) -> str | None:
-    """检测投诉/情绪升级（本条转人工待办，但不锁会话），返回触发词或 None。"""
+    """检测投诉、负面情绪或明确的已发生问题，返回触发原因或 None。"""
     for w in _COMPLAINT_WORDS:
         if w in text:
             return w
     if any(w in text for w in _EMOTION_WORDS):
         return "强烈负面情绪"
+    has_issue = any(w in text for w in _ISSUE_WORDS)
+    if has_issue and any(w in text for w in _DEFINITE_ISSUE_MARKERS):
+        return "明确不满反馈"
+    if (
+        has_issue
+        and any(w in text for w in _RECEIVED_MARKERS)
+        and not any(w in text for w in _PRESALE_MARKERS)
+    ):
+        return "明确售后问题"
     return None
 
 
