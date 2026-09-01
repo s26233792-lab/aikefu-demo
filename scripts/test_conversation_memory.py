@@ -42,6 +42,7 @@ def test_topic_memory_isolation() -> None:
     assert detect_topic("退款怎么还没到账？") == "aftersale"
     assert detect_topic("这个活动什么时候结束？") == "campaign"
     assert detect_topic("这个呢？") == "reference"
+    assert detect_topic("嗯，确认写入。") == "reference"
     assert detect_topic("这款有M码吗？") == "product"
 
     # 新会员、活动、售后和未知问题都不应携带上一轮商品答案。
