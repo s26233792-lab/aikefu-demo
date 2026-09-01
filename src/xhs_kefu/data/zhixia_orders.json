@@ -1,5 +1,23 @@
 [
   {
+    "order_id": "123456",
+    "verify_phone_last4": "7658",
+    "created_at": "2026-08-30T00:00:00+08:00",
+    "items": [{"sku": "ZX-J407", "color": "炭灰色", "size": "M", "quantity": 1}, {"sku": "ZX-S208", "color": "黑色", "size": "M", "quantity": 1}],
+    "subtotal_cents": 69800,
+    "discount_cents": 9490,
+    "discount_note": "两件 95 折 -¥34.90 + 满 ¥499 减 ¥60",
+    "shipping_fee_cents": 0,
+    "paid_cents": 60310,
+    "status": "已发货，运输中",
+    "logistics": "中通快递",
+    "tracking_masked": "7865****4321",
+    "latest_event": "2026-09-01 12:00，正在派件",
+    "eta": "2026-09-01 至 2026-09-02",
+    "address_masked": "江苏省南京市建邺区江东中路***号",
+    "aftersale_status": "无售后申请"
+  },
+  {
     "order_id": "ZX202608180031",
     "verify_phone_last4": "4826",
     "created_at": "2026-08-18T10:42:00+08:00",

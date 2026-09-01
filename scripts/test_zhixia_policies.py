@@ -45,6 +45,9 @@ def main() -> None:
     assert preorder["fulfillment_freshness"]["over_48h_unshipped"] is False
 
     assert tools.order_lookup("ZX202608200147")["error"] == "verify_required"
+    demo_order = tools.order_lookup("123456", "7658")
+    assert demo_order is not None and demo_order.get("order_id") == "123456"
+    assert demo_order["paid_cents"] == 60310
     assert tools.cancel_order("ZX202608210083", "0000")["error"] == "verify_failed"
     assert tools.cancel_order("ZX202608200147", "7319")["error"] == "shipped_cannot_cancel"
 
@@ -112,7 +115,7 @@ def main() -> None:
 
     lookup_retry = asyncio.run(
         ZhixiaRuntime(llm_agent=FakeLookupRetryAgent(), tools=tools).handle(
-            text="订单号 123456，手机号后四位 7658"
+            text="订单号 654321，手机号后四位 7658"
         )
     )
     assert lookup_retry["needs_human"] is False

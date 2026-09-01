@@ -19,12 +19,12 @@ class ZhixiaRuleAgent:
 
     @staticmethod
     def _order_id(text: str) -> str | None:
-        match = re.search(r"\bZX\d{12}\b", text.upper())
+        match = re.search(r"(?<!\d)(?:ZX\d{12}|\d{6})(?!\d)", text.upper())
         return match.group(0) if match else None
 
     @staticmethod
     def _phone_last4(text: str) -> str | None:
-        match = re.search(r"(?:手机号|手机|后四位)[^0-9]{0,8}(\d{4})", text)
+        match = re.search(r"(?:手机号|手机|后四位|尾号)[^0-9]{0,8}(\d{4})", text)
         return match.group(1) if match else None
 
     @staticmethod

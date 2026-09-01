@@ -8,6 +8,7 @@ from xhs_kefu.zhixia_tools import ZhixiaTools
 tools = ZhixiaTools()
 
 for oid, phone in [
+    ("123456", "7658"),             # 演示订单，运输中
     ("ZX202608200147", "7319"),   # 运输中
     ("ZX202608180031", "4826"),   # 已签收
     ("ZX202608210083", "1654"),   # 待发货

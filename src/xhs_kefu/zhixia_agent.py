@@ -342,8 +342,11 @@ class ZhixiaLLMAgent:
         # 对事实型问题先由编排层路由到可信数据，再交给 LLM 组织回答。
         # 这样既保留模型推理，又避免模型选择“先追问”而绕过店铺数据。
         prefetches: list[tuple[str, dict[str, str]]] = []
-        order_match = re.search(r"\bZX\d{12}\b", message_text.upper())
-        phone_match = re.search(r"(?:手机号)?后四位\s*[:：]?\s*(\d{4})", message_text)
+        order_match = re.search(r"(?<!\d)(?:ZX\d{12}|\d{6})(?!\d)", message_text.upper())
+        phone_match = re.search(
+            r"(?:(?:手机号|手机)?(?:后四位|尾号))\s*[:：]?\s*(\d{4})",
+            message_text,
+        )
         sku_match = re.search(r"\bZX-[A-Z]\d{3}\b", message_text.upper())
         product_words = (
             "商品", "推荐", "有哪些", "有哪", "上班穿", "通勤", "面试", "约会", "穿搭",
