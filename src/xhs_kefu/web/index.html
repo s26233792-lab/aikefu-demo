@@ -75,6 +75,38 @@
     transition: all .15s;
   }
   .scene-tab.active { background: var(--xhs-red); color:#fff; border-color:var(--xhs-red); }
+  .reply-mode-bar {
+    margin:12px 16px 0; padding:11px 12px; border:1px solid #d9e3ff; border-radius:14px;
+    display:flex; align-items:center; justify-content:space-between; gap:14px;
+    background:linear-gradient(115deg,#fff 0%,#f2f6ff 100%);
+    box-shadow:0 7px 20px rgba(22,93,255,.07);
+    transition:border-color .2s ease,background .2s ease,box-shadow .2s ease;
+  }
+  .reply-mode-bar.human {
+    border-color:#ffd7ad; background:linear-gradient(115deg,#fff 0%,#fff7ed 100%);
+    box-shadow:0 7px 20px rgba(255,125,0,.08);
+  }
+  .reply-mode-copy { min-width:0; }
+  .reply-mode-kicker { color:var(--muted); font-size:10px; font-weight:700; letter-spacing:.08em; }
+  .reply-mode-title { display:flex; align-items:center; gap:7px; margin-top:3px; font-size:14px; }
+  .reply-mode-signal { width:8px; height:8px; border-radius:50%; background:var(--green); box-shadow:0 0 0 4px rgba(0,180,42,.1); }
+  .reply-mode-bar.human .reply-mode-signal { background:var(--orange); box-shadow:0 0 0 4px rgba(255,125,0,.12); }
+  .reply-mode-hint { margin-top:2px; color:#727987; font-size:11px; line-height:1.45; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .reply-mode-switch {
+    flex:0 0 auto; display:grid; grid-template-columns:1fr 1fr; gap:3px; padding:3px;
+    border:1px solid var(--border); border-radius:11px; background:#eef0f4;
+  }
+  .reply-mode-choice {
+    min-width:110px; padding:7px 11px; border:0; border-radius:8px; background:transparent;
+    color:#6b7280; font-size:12px; font-weight:700; cursor:pointer;
+    transition:background .16s ease,color .16s ease,box-shadow .16s ease,transform .16s ease;
+  }
+  .reply-mode-choice:hover:not(:disabled) { color:var(--text); }
+  .reply-mode-choice:active:not(:disabled) { transform:scale(.98); }
+  .reply-mode-choice:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }
+  .reply-mode-choice.active[data-mode="auto"] { background:#fff; color:var(--blue); box-shadow:0 2px 8px rgba(22,93,255,.12); }
+  .reply-mode-choice.active[data-mode="human_active"] { background:#fff; color:#c75f00; box-shadow:0 2px 8px rgba(255,125,0,.13); }
+  .reply-mode-choice:disabled { cursor:wait; opacity:.58; }
   .chat { flex:1; overflow-y:auto; padding: 16px; display:flex; flex-direction:column; gap:12px; }
   .msg { max-width: 78%; padding: 10px 14px; border-radius: 14px; font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
   .msg.customer { align-self: flex-start; background: #f2f3f5; border-top-left-radius: 4px; }
@@ -240,6 +272,19 @@
     header .status { max-width:126px; font-size:9px; line-height:1.2; }
     .workspace-nav { order:3; width:100%; }
     .workspace-tab { flex:1; padding:7px 8px; }
+    #serviceWorkspace { grid-template-columns:1fr; grid-template-rows:auto auto; overflow-y:auto; }
+    #serviceWorkspace .pane { min-width:0; overflow:visible; }
+    #serviceWorkspace .pane.left { min-height:620px; border-right:0; border-bottom:1px solid var(--border); }
+    #serviceWorkspace .pane.right { min-height:650px; }
+    #serviceWorkspace .chat { min-height:330px; }
+    #serviceWorkspace .trace { min-height:270px; }
+    .pane-title { align-items:flex-start; flex-direction:column; gap:8px; }
+    .scene-tabs { width:100%; overflow-x:auto; padding-bottom:2px; }
+    .scene-tab { flex:0 0 auto; white-space:nowrap; }
+    .reply-mode-bar { margin:10px 10px 0; align-items:stretch; flex-direction:column; gap:9px; }
+    .reply-mode-hint { white-space:normal; }
+    .reply-mode-switch { width:100%; }
+    .reply-mode-choice { min-width:0; }
     .feedback-workspace { width:100%; overflow-x:hidden; padding:12px; }
     .feedback-shell { width:100%; min-width:0; }
     .feedback-hero { min-height:218px; padding:24px 20px; display:block; }
@@ -295,6 +340,20 @@
         <div class="scene-tab" data-scene="negative">不满 · 投诉</div>
       </div>
     </div>
+    <section class="reply-mode-bar" id="replyModeBar" aria-live="polite">
+      <div class="reply-mode-copy">
+        <div class="reply-mode-kicker" id="replyModeScope">当前会话 · 售前导购</div>
+        <div class="reply-mode-title">
+          <span class="reply-mode-signal" aria-hidden="true"></span>
+          <strong id="replyModeTitle">AI 智能回复</strong>
+        </div>
+        <div class="reply-mode-hint" id="replyModeHint">普通问题自动回复，风险事项仍会转人工</div>
+      </div>
+      <div class="reply-mode-switch" role="group" aria-label="当前会话回复模式">
+        <button class="reply-mode-choice active" id="autoModeBtn" data-mode="auto" aria-pressed="true">AI 智能回复</button>
+        <button class="reply-mode-choice" id="humanModeBtn" data-mode="human_active" aria-pressed="false">人工接管</button>
+      </div>
+    </section>
     <div class="chat" id="chat"></div>
     <div class="input-bar">
       <input id="input" placeholder="输入顾客消息…" />
@@ -314,11 +373,6 @@
         <h3 style="font-size:13px;color:#86909c;margin-bottom:6px;">✍️ 人工手写回复（发送到原平台）</h3>
         <input id="manualReplyInput" placeholder="输入要发给当前顾客的消息…" style="width:100%;padding:8px 10px;border:1px solid #e5e6eb;border-radius:8px;font-size:13px;" />
         <button class="btn" id="manualReplyBtn" style="font-size:12px;margin-top:6px;">发送手写回复</button>
-      </div>
-      <div style="margin-top:8px;border-top:1px solid #e5e6eb;padding-top:8px;">
-        <h3 style="font-size:13px;color:#86909c;">会话接管</h3>
-        <button class="btn secondary" id="takeOverBtn" style="font-size:12px;">🚫 接管当前会话</button>
-        <button class="btn secondary" id="releaseBtn" style="font-size:12px;margin-left:6px;">✅ 恢复自动回复</button>
       </div>
     </div>
   </div>
@@ -439,6 +493,8 @@ const SCENES = {
 
 let currentScene = "pre";
 let msgSeq = 0;
+let replyMode = "auto";
+let replyModeBusy = false;
 
 const chatEl = document.getElementById("chat");
 const traceEl = document.getElementById("trace");
@@ -449,6 +505,84 @@ const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
 const serviceWorkspace = document.getElementById("serviceWorkspace");
 const feedbackWorkspace = document.getElementById("feedbackWorkspace");
+const replyModeBar = document.getElementById("replyModeBar");
+const replyModeTitle = document.getElementById("replyModeTitle");
+const replyModeHint = document.getElementById("replyModeHint");
+const replyModeScope = document.getElementById("replyModeScope");
+const autoModeBtn = document.getElementById("autoModeBtn");
+const humanModeBtn = document.getElementById("humanModeBtn");
+
+function currentSessionContext() {
+  const scene = SCENES[currentScene];
+  return {
+    session_key: "zhixia|demo|xhs_qianfan_desktop|STORE-001|" + scene.customerId,
+    customer_id: scene.customerId,
+  };
+}
+
+function renderReplyMode(mode) {
+  replyMode = mode === "human_active" ? "human_active" : "auto";
+  const isHuman = replyMode === "human_active";
+  replyModeBar.classList.toggle("human", isHuman);
+  replyModeTitle.textContent = isHuman ? "人工接管" : "AI 智能回复";
+  replyModeHint.textContent = isHuman
+    ? "Agent 已停止回复，等待人工处理并手动恢复"
+    : "普通问题自动回复，风险事项仍会转人工";
+  replyModeScope.textContent = "当前会话 · " + SCENES[currentScene].label;
+  autoModeBtn.classList.toggle("active", !isHuman);
+  humanModeBtn.classList.toggle("active", isHuman);
+  autoModeBtn.setAttribute("aria-pressed", String(!isHuman));
+  humanModeBtn.setAttribute("aria-pressed", String(isHuman));
+}
+
+function setReplyModeBusy(busy) {
+  replyModeBusy = busy;
+  autoModeBtn.disabled = busy;
+  humanModeBtn.disabled = busy;
+}
+
+async function refreshReplyMode() {
+  const context = currentSessionContext();
+  try {
+    const response = await fetch(`/v1/handoff/status?session_key=${encodeURIComponent(context.session_key)}`);
+    if (!response.ok) throw new Error("mode status failed");
+    const result = await response.json();
+    renderReplyMode(result.mode);
+  } catch (error) {
+    replyModeHint.textContent = "模式状态暂时无法读取，请稍后重试";
+  }
+}
+
+async function changeReplyMode(mode) {
+  if (replyModeBusy || mode === replyMode) return;
+  const context = currentSessionContext();
+  setReplyModeBusy(true);
+  try {
+    const response = await fetch("/v1/handoff", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_key: context.session_key,
+        action: mode === "human_active" ? "take_over" : "release",
+        reason: "operator_mode_switch",
+      }),
+    });
+    if (!response.ok) throw new Error("mode update failed");
+    const result = await response.json();
+    renderReplyMode(result.state);
+    addMsg(
+      "system",
+      result.state === "human_active"
+        ? "当前会话已切换为人工接管，Agent 将停止回复"
+        : "当前会话已恢复 AI 智能回复"
+    );
+  } catch (error) {
+    addMsg("system", "模式切换失败，请稍后重试");
+    await refreshReplyMode();
+  } finally {
+    setReplyModeBusy(false);
+  }
+}
 
 async function healthCheck() {
   try {
@@ -620,6 +754,7 @@ async function sendMessage(text, customerId) {
       addMsg("system", "本轮没有生成可发送的回复");
     }
     renderTrace(resp);
+    if (resp.status === "taken_over") renderReplyMode("human_active");
     if (resp.feedback_id) refreshFeedback();
   } catch (e) {
     thinking.remove();
@@ -650,8 +785,10 @@ async function switchScene(scene) {
         body: JSON.stringify({ session_key: sessionKey, action: "release" }),
       });
       if (!resetResponse.ok) throw new Error("reset failed");
+      renderReplyMode("auto");
     } catch (error) {
       addMsg("system", "⚠️ 演示会话重置失败，请点击“恢复自动回复”后重试");
+      await refreshReplyMode();
     }
   }
   if (currentScene !== scene) return;
@@ -682,17 +819,6 @@ function showScriptButtons(s) {
 async function refreshActions() {
   // 现在改为展示人工审批队列
   await refreshModeration();
-}
-
-async function handleHandoff(action) {
-  const sid = SCENES[currentScene].customerId;
-  const sessionKey = "zhixia|demo|xhs_qianfan_desktop|STORE-001|" + sid;
-  await fetch("/v1/handoff", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_key: sessionKey, action: action }),
-  });
-  addMsg("system", action === "take_over" ? "🚫 已接管会话，Agent 停止自动回复" : "✅ 已恢复自动回复");
 }
 
 let manualContext = null;
@@ -1035,8 +1161,8 @@ sendBtn.addEventListener("click", () => sendMessage(inputEl.value, SCENES[curren
 inputEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendMessage(inputEl.value, SCENES[currentScene].customerId);
 });
-document.getElementById("takeOverBtn").addEventListener("click", () => handleHandoff("take_over"));
-document.getElementById("releaseBtn").addEventListener("click", () => handleHandoff("release"));
+autoModeBtn.addEventListener("click", () => changeReplyMode("auto"));
+humanModeBtn.addEventListener("click", () => changeReplyMode("human_active"));
 document.getElementById("manualReplyBtn").addEventListener("click", sendManualReply);
 document.getElementById("feedbackRefresh").addEventListener("click", refreshFeedback);
 ["feedbackChannelFilter", "feedbackStatusFilter", "feedbackSeverityFilter"].forEach((id) => {
