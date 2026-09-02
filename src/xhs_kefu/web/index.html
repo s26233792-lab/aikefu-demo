@@ -571,7 +571,11 @@ function renderTrace(response) {
   rl.textContent = "最终回复（status: " + response.status + "）";
   reply.appendChild(rl);
   const rc = document.createElement("div");
-  rc.textContent = response.reply || "(空)";
+  rc.textContent = response.reply || (
+    response.status === "taken_over"
+      ? "人工已接管，Agent 停止自动回复"
+      : "本轮无可发送回复"
+  );
   reply.appendChild(rc);
   container.appendChild(reply);
 
@@ -608,7 +612,13 @@ async function sendMessage(text, customerId) {
     if (resp.deduplicated) {
       addMsg("system", "（消息去重，复用已有回复）");
     }
-    addMsg("agent", resp.reply || "(无回复)");
+    if (resp.reply) {
+      addMsg("agent", resp.reply);
+    } else if (resp.status === "taken_over") {
+      addMsg("system", "👩‍💼 当前会话已由人工接管，Agent 已停止自动回复");
+    } else {
+      addMsg("system", "本轮没有生成可发送的回复");
+    }
     renderTrace(resp);
     if (resp.feedback_id) refreshFeedback();
   } catch (e) {
@@ -620,7 +630,7 @@ async function sendMessage(text, customerId) {
   }
 }
 
-function switchScene(scene) {
+async function switchScene(scene) {
   currentScene = scene;
   document.querySelectorAll(".scene-tab").forEach((t) => {
     t.classList.toggle("active", t.dataset.scene === scene);
@@ -628,6 +638,23 @@ function switchScene(scene) {
   chatEl.innerHTML = "";
   traceEl.innerHTML = "";
   const s = SCENES[scene];
+  // 固定演示顾客会保留真实的人工接管锁。每次重新进入一个演示场景时
+  // 释放该演示会话，保证第一条“我要投诉”等消息能够展示“先安抚、再转人工”。
+  // 这里只处理 demo-* 顾客，不影响千帆或抖店里的真实会话。
+  if (s.customerId.startsWith("demo-")) {
+    const sessionKey = "zhixia|demo|xhs_qianfan_desktop|STORE-001|" + s.customerId;
+    try {
+      const resetResponse = await fetch("/v1/handoff", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_key: sessionKey, action: "release" }),
+      });
+      if (!resetResponse.ok) throw new Error("reset failed");
+    } catch (error) {
+      addMsg("system", "⚠️ 演示会话重置失败，请点击“恢复自动回复”后重试");
+    }
+  }
+  if (currentScene !== scene) return;
   addMsg("system", "—— 已切换到「" + s.label + "」场景（顾客 " + s.customerId + "）——");
   // 自动播放场景脚本（可点击逐条，此处一次性指导）
   addMsg("system", "可点击下方脚本逐条体验，或手动输入消息。脚本：" + s.script.join(" / "));
