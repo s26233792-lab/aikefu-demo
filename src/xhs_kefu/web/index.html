@@ -748,13 +748,19 @@ async function sendMessage(text, customerId) {
     }
     if (resp.reply) {
       addMsg("agent", resp.reply);
-    } else if (resp.status === "taken_over") {
+    } else if (resp.status === "taken_over" && resp.handoff_persisted) {
       addMsg("system", "👩‍💼 当前会话已由人工接管，Agent 已停止自动回复");
+    } else if (resp.status === "taken_over") {
+      addMsg("system", "已提醒人工介入，千帆 AI 继续保持接待");
     } else {
       addMsg("system", "本轮没有生成可发送的回复");
     }
     renderTrace(resp);
-    if (resp.status === "taken_over") renderReplyMode("human_active");
+    if (resp.status === "taken_over" && resp.handoff_persisted) {
+      renderReplyMode("human_active");
+    } else if (resp.status === "taken_over") {
+      renderReplyMode("auto");
+    }
     if (resp.feedback_id) refreshFeedback();
   } catch (e) {
     thinking.remove();

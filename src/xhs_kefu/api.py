@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .config import Settings
+from .decision import is_explicit_handoff
 from .domain import IncomingMessage
 from .feedback import detect_negative_feedback
 from .fixtures import Fixtures
@@ -205,6 +206,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ("zhixia", req.tenant_id, req.channel, req.store_id, customer_id)
         )
         handoff = store.get_handoff(session_key)
+        # 千帆默认保持 AI 常开。历史投诉/负面情绪触发的自动接管只负责
+        # 安抚和提醒人工，不能把会话永久锁死。客服主动接管，或顾客明确
+        # 要求真人时，才保留会话级暂停状态。
+        if (
+            req.channel == "xhs_qianfan_desktop"
+            and handoff
+            and handoff.get("state") == "human_active"
+            and not str(handoff.get("reason", "")).startswith("operator")
+            and handoff.get("reason") != "customer_requested_human"
+        ):
+            store.set_handoff(
+                session_key=session_key,
+                state="auto",
+                reason="qianfan_ai_always_on",
+                updated_at=datetime.now(timezone.utc).isoformat(),
+            )
+            handoff = None
         if handoff and handoff.get("state") == "human_active":
             taken_over = {
                 "status": "taken_over",
@@ -213,6 +231,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "reply": "",
                 "session_key": session_key,
                 "handoff_reason": handoff.get("reason") or "operator_takeover",
+                "handoff_persisted": True,
             }
             feedback_id = _record_feedback(
                 text=req.text, customer_id=customer_id, session_key=session_key,
@@ -283,19 +302,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 store_id=req.store_id,
                 channel=req.channel,
             )
+        handoff_persisted = False
         if disposition == "handoff_human":
-            # 一次性安抚发送后立刻锁定会话。后续顾客消息只提醒人工，
-            # 不再交给 Agent 生成回复，直到客服明确释放会话。
+            # 千帆主模式保持 AI 常开：普通投诉/不满仍发送一次安抚并提醒人工，
+            # 但不会永久锁住后续消息。只有顾客明确要求真人，或客服从工作台
+            # 主动接管时，才暂停当前会话的自动回复。
+            handoff_persisted = (
+                req.channel != "xhs_qianfan_desktop"
+                or is_explicit_handoff(req.text)
+            )
             store.set_handoff(
                 session_key=session_key,
-                state="human_active",
-                reason=result.get("handoff_reason") or "automatic_handoff",
+                state="human_active" if handoff_persisted else "auto",
+                reason=(
+                    "customer_requested_human"
+                    if handoff_persisted and req.channel == "xhs_qianfan_desktop"
+                    else (
+                        result.get("handoff_reason") or "automatic_handoff"
+                        if handoff_persisted
+                        else "qianfan_ai_always_on"
+                    )
+                ),
                 updated_at=now,
             )
         result["status"] = status
         result["needs_approval"] = needs_approval
         result["moderation_id"] = mod_id
         result["session_key"] = session_key
+        result["handoff_persisted"] = handoff_persisted
         feedback_id = _record_feedback(
             text=req.text, customer_id=customer_id, session_key=session_key,
             tenant_id=req.tenant_id, store_id=req.store_id, channel=req.channel,

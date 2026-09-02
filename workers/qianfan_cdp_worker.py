@@ -271,8 +271,8 @@ class QianfanCdpWorker:
         decision = await self.decide(text, customer_id, fingerprint)
         if not decision:
             return
-        # 首次触发人工接管时先发送一次短安抚；已接管会话的后续消息 reply 为空，
-        # 因此不会重复安抚，只会提醒人工。
+        # 首次触发人工介入时先发送一次短安抚。千帆默认保持 AI 常开；只有
+        # 客服主动接管或顾客明确要求真人时，才会锁定当前会话。
         if decision.get("status") == "taken_over":
             reply = (decision.get("reply") or "").strip()
             if decision.get("send_before_handoff") and reply:
@@ -282,9 +282,14 @@ class QianfanCdpWorker:
                     expected_customer=customer_id,
                     expected_fingerprint=fingerprint,
                 ):
-                    print(f"[cdp-worker v2] 已发送安抚语并转人工: {reply[:40]}...")
-            print(f"[cdp-worker v2] 会话已转人工，停止后续自动回复: {text[:30]}...")
-            await self._notify_in_qianfan(session, f"🙋 需要人工接管：{text[:30]}")
+                    print(f"[cdp-worker v2] 已发送人工介入安抚语: {reply[:40]}...")
+            if decision.get("handoff_persisted"):
+                print(f"[cdp-worker v2] 会话已转人工，停止后续自动回复: {text[:30]}...")
+                notice = f"🙋 需要人工接管：{text[:30]}"
+            else:
+                print(f"[cdp-worker v2] 已提醒人工，千帆 AI 保持常开: {text[:30]}...")
+                notice = f"🙋 需要人工介入（AI保持常开）：{text[:30]}"
+            await self._notify_in_qianfan(session, notice)
             system_notify("critical")  # 置顶 + 任务栏持续闪烁 + 声音
             return
         reply = decision.get("reply", "")

@@ -79,7 +79,6 @@ def test_api_capture_and_status(tmp: Path) -> None:
             "channel": "xhs_qianfan_desktop",
         }
         first = client.post("/zhixia/decide", json=payload)
-        second = client.post("/zhixia/decide", json=payload)
         assert first.status_code == 200
         first_result = first.json()
         assert first_result.get("feedback_id")
@@ -87,13 +86,23 @@ def test_api_capture_and_status(tmp: Path) -> None:
         assert first_result["send_before_handoff"] is True
         assert "人工客服" in first_result["reply"]
         assert len(first_result["reply"]) <= 45
-        assert second.status_code == 200
-        assert second.json()["status"] == "taken_over"
-        assert second.json()["reply"] == ""
+        assert first_result["handoff_persisted"] is False
 
         session_key = first_result["session_key"]
         handoff = app.state.runtime.store.get_handoff(session_key)
-        assert handoff is not None and handoff["state"] == "human_active"
+        assert handoff is not None and handoff["state"] == "auto"
+        follow_up = client.post(
+            "/zhixia/decide",
+            json={
+                "text": "那黑色还有货吗？",
+                "customer_id": "buyer-feedback",
+                "message_id": "negative-002",
+                "channel": "xhs_qianfan_desktop",
+            },
+        )
+        assert follow_up.status_code == 200
+        assert follow_up.json()["status"] == "resolved"
+        assert follow_up.json()["reply"]
         moderation = app.state.runtime.store.get_moderation(first_result["moderation_id"])
         assert moderation is not None
         assert moderation["kind"] == "handoff"
@@ -112,6 +121,29 @@ def test_api_capture_and_status(tmp: Path) -> None:
         stats = client.get("/v1/feedback/stats", params={"days": 30}).json()
         assert stats["total"] == 1
         assert stats["resolved"] == 1
+
+        explicit = client.post(
+            "/zhixia/decide",
+            json={
+                "text": "别让机器人回了，帮我转人工客服",
+                "customer_id": "buyer-explicit-human",
+                "message_id": "explicit-001",
+                "channel": "xhs_qianfan_desktop",
+            },
+        ).json()
+        assert explicit["status"] == "taken_over"
+        assert explicit["handoff_persisted"] is True
+        blocked = client.post(
+            "/zhixia/decide",
+            json={
+                "text": "有人吗",
+                "customer_id": "buyer-explicit-human",
+                "message_id": "explicit-002",
+                "channel": "xhs_qianfan_desktop",
+            },
+        ).json()
+        assert blocked["status"] == "taken_over"
+        assert blocked["reply"] == ""
 
 
 def main() -> None:

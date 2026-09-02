@@ -295,7 +295,8 @@ class ZhixiaRuntime:
                 "needs_human": True,
                 "reply": _handoff_ack(text, tone.value),
                 "tool_calls": [], "moderation_id": f"mod_{uuid.uuid4().hex}",
-                # 渠道先发送这一条短安抚语，然后立即停止自动回复并等待人工。
+                # 渠道先发送这一条短安抚语并提醒人工；是否暂停后续自动回复
+                # 由各渠道的接管策略决定。
                 "send_before_handoff": True,
                 "handoff_reason": handoff_reason,
             }
